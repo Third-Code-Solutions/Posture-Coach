@@ -1069,7 +1069,7 @@ export function CoachApp() {
                     : "preview idle"}
                 </span>
                 <span>
-                  {sourceKind === "camera" && trackingLatencyMs !== null
+                  {sourceKind !== null && sourceKind !== "image" && trackingLatencyMs !== null
                     ? `${trackingLatencyMs}ms live`
                     : formatTime(sessionSeconds)}
                 </span>
