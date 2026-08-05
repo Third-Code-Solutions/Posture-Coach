@@ -17,6 +17,7 @@ import {
   RejectionReason,
   SessionSummary,
   SessionTracker,
+  LandmarkSmoother,
   createCalibrationProfile,
   isObservedViewCompatible,
   isViewSupported,
@@ -26,6 +27,8 @@ import {
   createObservation,
   getCameraConstraints,
   getLocalMediaKind,
+  isPortraitFrame,
+  preferPortraitTrack,
   PoseWorkerClient,
   PoseWorkerResponse,
 } from "../../src/vision";
@@ -215,6 +218,8 @@ export function CoachApp() {
   const [sessionSummary, setSessionSummary] = useState<SessionSummary | null>(null);
   const [sourceSize, setSourceSize] = useState({ width: 0, height: 0 });
   const [imageStatus, setImageStatus] = useState<ImageStatus | null>(null);
+  const [portraitCapture, setPortraitCapture] = useState<boolean | null>(null);
+  const [trackingLatencyMs, setTrackingLatencyMs] = useState<number | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
@@ -225,7 +230,9 @@ export function CoachApp() {
   const engineRef = useRef(new PostureEngine());
   const calibrationRef = useRef<CalibrationWindow | null>(null);
   const animationRef = useRef<number | null>(null);
+  const videoFrameCallbackRef = useRef<number | null>(null);
   const lastVideoTimeRef = useRef(-1);
+  const lastSubmittedTimestampRef = useRef(-1);
   const sequenceRef = useRef(0);
   const sessionStartedRef = useRef<number | null>(null);
   const sourceKindRef = useRef<SourceKind | null>(null);
@@ -236,6 +243,7 @@ export function CoachApp() {
   const calibrationStableRef = useRef(false);
   const processingRef = useRef(false);
   const frameCaptureInFlightRef = useRef(false);
+  const visualSmootherRef = useRef(new LandmarkSmoother(0.72));
   const sessionTrackerRef = useRef<SessionTracker | null>(null);
   const sourceEpochRef = useRef(0);
   const cameraRequestSequenceRef = useRef(0);
@@ -291,7 +299,8 @@ export function CoachApp() {
 
   const handleWorkerMessage = (message: PoseWorkerResponse) => {
     if (message.type === "ready") {
-      setWorkerLabel("Pose Landmarker Full · local");
+      const delegate = message.version.match(/\b(GPU|CPU)\b/)?.[1];
+      setWorkerLabel(`Pose Landmarker Full${delegate ? ` · ${delegate}` : ""} · local`);
       return;
     }
     if (message.type === "error") {
@@ -310,8 +319,16 @@ export function CoachApp() {
       cameraView: viewRef.current,
       mirroredPreview: mirroredRef.current,
     });
-    setLandmarks(observation.landmarks);
-    if (sourceKindRef.current === "image") {
+    const isImage = sourceKindRef.current === "image";
+    setLandmarks(
+      isImage
+        ? observation.landmarks
+        : visualSmootherRef.current.update(observation.landmarks, observation.timestampMs),
+    );
+    if (!isImage) {
+      setTrackingLatencyMs(Math.max(0, Math.round(performance.now() - message.timestampMs)));
+    }
+    if (isImage) {
       processingRef.current = false;
       setImageStatus(
         message.landmarks.length > 0 && observation.poseConfidence >= 0.45 ? "ready" : "no-pose",
@@ -394,19 +411,23 @@ export function CoachApp() {
     workerRef.current?.dispose();
     workerRef.current = null;
     lastVideoTimeRef.current = -1;
+    lastSubmittedTimestampRef.current = -1;
     frameCaptureInFlightRef.current = false;
+    visualSmootherRef.current.reset();
+    setTrackingLatencyMs(null);
     if (processingRef.current) ensureWorker();
   }
 
-  const processFrame = async () => {
+  const processFrame = async (mediaTime?: number) => {
     const video = videoRef.current;
     const worker = workerRef.current;
     const sourceEpoch = sourceEpochRef.current;
     if (!video || !worker || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
     if (!worker.canAcceptFrame() || frameCaptureInFlightRef.current) return;
-    if (video.currentTime === lastVideoTimeRef.current) return;
+    const currentTime =
+      typeof mediaTime === "number" && Number.isFinite(mediaTime) ? mediaTime : video.currentTime;
+    if (currentTime <= lastVideoTimeRef.current) return;
     frameCaptureInFlightRef.current = true;
-    const currentTime = video.currentTime;
     try {
       const frame = await createImageBitmap(video);
       if (
@@ -418,7 +439,9 @@ export function CoachApp() {
         return;
       }
       lastVideoTimeRef.current = currentTime;
-      worker.submit(frame, Math.max(0, performance.now()), sequenceRef.current++);
+      const timestampMs = Math.max(performance.now(), lastSubmittedTimestampRef.current + 0.1);
+      lastSubmittedTimestampRef.current = timestampMs;
+      worker.submit(frame, timestampMs, sequenceRef.current++);
     } catch {
       // A frame may disappear during source changes. Cleanup owns the error state.
     } finally {
@@ -428,15 +451,41 @@ export function CoachApp() {
     }
   };
 
-  const loop = () => {
-    if (!processingRef.current) return;
-    void processFrame();
-    animationRef.current = window.requestAnimationFrame(loop);
+  const stopFrameLoop = () => {
+    if (animationRef.current !== null) {
+      window.cancelAnimationFrame(animationRef.current);
+      animationRef.current = null;
+    }
+    const video = videoRef.current;
+    if (videoFrameCallbackRef.current !== null && video?.cancelVideoFrameCallback) {
+      video.cancelVideoFrameCallback(videoFrameCallbackRef.current);
+      videoFrameCallbackRef.current = null;
+    }
+  };
+
+  const scheduleFrameLoop = () => {
+    const video = videoRef.current;
+    if (!processingRef.current || !video) return;
+    if (video.requestVideoFrameCallback) {
+      videoFrameCallbackRef.current = video.requestVideoFrameCallback((_now, metadata) => {
+        videoFrameCallbackRef.current = null;
+        if (!processingRef.current) return;
+        void processFrame(metadata.mediaTime);
+        scheduleFrameLoop();
+      });
+      return;
+    }
+    animationRef.current = window.requestAnimationFrame(() => {
+      animationRef.current = null;
+      if (!processingRef.current) return;
+      void processFrame();
+      scheduleFrameLoop();
+    });
   };
 
   const startLoop = () => {
-    if (animationRef.current !== null) window.cancelAnimationFrame(animationRef.current);
-    animationRef.current = window.requestAnimationFrame(loop);
+    stopFrameLoop();
+    scheduleFrameLoop();
   };
 
   const isCurrentVideoSource = (video: HTMLVideoElement, token: VideoSourceToken): boolean => {
@@ -466,9 +515,11 @@ export function CoachApp() {
       await video.play();
       if (!isCurrentVideoSource(video, token)) return;
       setSourceSize({ width: video.videoWidth, height: video.videoHeight });
+      setPortraitCapture(isPortraitFrame(video.videoWidth, video.videoHeight));
       video.onresize = () => {
         if (videoRef.current !== video || video.videoWidth <= 0 || video.videoHeight <= 0) return;
         setSourceSize({ width: video.videoWidth, height: video.videoHeight });
+        setPortraitCapture(isPortraitFrame(video.videoWidth, video.videoHeight));
       };
       processingRef.current = true;
       setSourceState("active");
@@ -586,6 +637,8 @@ export function CoachApp() {
       cameraTrackCleanupRef.current = detachTrackListeners;
       const video = videoRef.current;
       if (!video) throw new Error("Preview is not ready.");
+      const videoTrack = stream.getVideoTracks()[0];
+      if (videoTrack) await preferPortraitTrack(videoTrack);
       video.srcObject = stream;
       video.autoplay = true;
       video.muted = true;
@@ -696,10 +749,7 @@ export function CoachApp() {
     frameCaptureInFlightRef.current = false;
     calibratingRef.current = false;
     setCalibrating(false);
-    if (animationRef.current !== null) {
-      window.cancelAnimationFrame(animationRef.current);
-      animationRef.current = null;
-    }
+    stopFrameLoop();
     workerRef.current?.dispose();
     workerRef.current = null;
     const tracker = sessionTrackerRef.current;
@@ -745,6 +795,8 @@ export function CoachApp() {
     setLandmarks(null);
     setImageStatus(null);
     setSourceSize({ width: 0, height: 0 });
+    setPortraitCapture(null);
+    setTrackingLatencyMs(null);
   }
 
   const beginCalibration = () => {
@@ -836,10 +888,7 @@ export function CoachApp() {
     calibrationStableRef.current = false;
     calibrationRef.current = null;
     engineRef.current.reset();
-    if (animationRef.current !== null) {
-      window.cancelAnimationFrame(animationRef.current);
-      animationRef.current = null;
-    }
+    stopFrameLoop();
     cameraTrackCleanupRef.current?.();
     cameraTrackCleanupRef.current = null;
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -847,8 +896,11 @@ export function CoachApp() {
     streamRef.current = null;
     releaseMediaSource();
     lastVideoTimeRef.current = -1;
+    lastSubmittedTimestampRef.current = -1;
     frameCaptureInFlightRef.current = false;
     sequenceRef.current = 0;
+    visualSmootherRef.current.reset();
+    setTrackingLatencyMs(null);
     setResult(null);
     setCalibration(createCalibrationProfile(modeRef.current, viewRef.current, mirroredRef.current));
     if (resetSource) {
@@ -991,7 +1043,7 @@ export function CoachApp() {
                     <strong>Start when you’re ready.</strong>
                     <span>
                       Center one person in frame, keep your full body visible, and use even light.
-                      On a phone, step back until your head and feet stay inside the frame.
+                      Keep the camera upright and step back until your head and feet stay inside the frame.
                     </span>
                   </div>
                 </div>
@@ -1007,10 +1059,20 @@ export function CoachApp() {
                           : imageStatus === "no-pose"
                             ? "image · no pose found"
                             : "image · analyzing on device"
-                        : `${sourceKind} · processing on device`
+                        : sourceKind === "camera"
+                          ? portraitCapture === false
+                            ? "camera · landscape fallback · processing on device"
+                            : portraitCapture === true
+                              ? "camera · portrait · processing on device"
+                              : "camera · portrait request · processing on device"
+                          : `${sourceKind} · processing on device`
                     : "preview idle"}
                 </span>
-                <span>{formatTime(sessionSeconds)}</span>
+                <span>
+                  {sourceKind === "camera" && trackingLatencyMs !== null
+                    ? `${trackingLatencyMs}ms live`
+                    : formatTime(sessionSeconds)}
+                </span>
               </div>
             </div>
 
@@ -1033,8 +1095,13 @@ export function CoachApp() {
                 </select>
                 <p className="positioning-note">{cameraGuidance(mode, view)}</p>
                 <p className="positioning-note mobile-capture-note">
-                  Full-body tip: use portrait orientation, place your phone on a stable surface, and
-                  step back until your head and feet stay inside the frame.
+                  Portrait capture: keep the camera upright, place it on a stable surface, and step
+                  back until your head and feet stay inside the frame.
+                </p>
+                <p className="positioning-note portrait-capture-note">
+                  {sourceKind === "camera" && portraitCapture === false
+                    ? "This device returned a landscape camera stream. Rotate the device or webcam, then reconnect; the full frame remains visible without cropping."
+                    : "Portrait-first camera request: keep the full body inside the guide area for complete landmark tracking."}
                 </p>
               </div>
               <label className="calibration-row">

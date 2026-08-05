@@ -837,7 +837,9 @@ function feedbackFor(result: {
 }
 
 export class PostureEngine {
-  private readonly smoother = new LandmarkSmoother(0.32);
+  // Favor current-frame response while retaining enough filtering to keep
+  // low-light/mobile landmark jitter from becoming false coaching cues.
+  private readonly smoother = new LandmarkSmoother(0.58);
   private readonly gates = new Map<IssueCode, PersistenceGate>();
   private readonly exercises = new Map<Exclude<AnalysisMode, "desk">, ExerciseState>();
   private mode: AnalysisMode = "desk";

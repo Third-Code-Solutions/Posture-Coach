@@ -3,7 +3,7 @@ import type { PoseLandmarkerResult } from "@mediapipe/tasks-vision";
 import type { PoseWorkerRequest, PoseWorkerResponse } from "./protocol";
 
 const nativeFetch = globalThis.fetch.bind(globalThis);
-const LOCAL_WORKER_RUNTIME_REVISION = "2026-08-05-csp";
+const LOCAL_WORKER_RUNTIME_REVISION = "2026-08-06-portrait-realtime";
 
 function isTelemetryRequest(input: RequestInfo | URL): boolean {
   const url = typeof input === "string" ? input : "url" in input ? input.url : input.href;
@@ -21,6 +21,7 @@ globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) =>
 let landmarker: PoseLandmarker | null = null;
 let landmarkerPromise: Promise<void> | null = null;
 let disposed = false;
+let activeDelegate: "GPU" | "CPU" = "CPU";
 
 const workerScope = self as unknown as {
   onmessage: ((event: MessageEvent<PoseWorkerRequest>) => void) | null;
@@ -32,18 +33,34 @@ async function createLandmarker(): Promise<void> {
   if (!landmarkerPromise) {
     landmarkerPromise = (async () => {
       const vision = await FilesetResolver.forVisionTasks("/wasm");
-      const created = await PoseLandmarker.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath: "/models/pose_landmarker_full.task",
-          delegate: "CPU",
-        },
-        runningMode: "VIDEO",
+      const options = {
+        runningMode: "VIDEO" as const,
         numPoses: 1,
         minPoseDetectionConfidence: 0.55,
         minPosePresenceConfidence: 0.55,
         minTrackingConfidence: 0.55,
         outputSegmentationMasks: false,
-      });
+      };
+      let created: PoseLandmarker;
+      try {
+        created = await PoseLandmarker.createFromOptions(vision, {
+          ...options,
+          baseOptions: {
+            modelAssetPath: "/models/pose_landmarker_full.task",
+            delegate: "GPU",
+          },
+        });
+        activeDelegate = "GPU";
+      } catch {
+        created = await PoseLandmarker.createFromOptions(vision, {
+          ...options,
+          baseOptions: {
+            modelAssetPath: "/models/pose_landmarker_full.task",
+            delegate: "CPU",
+          },
+        });
+        activeDelegate = "CPU";
+      }
       if (disposed) {
         created.close();
         return;
@@ -101,7 +118,7 @@ workerScope.onmessage = async (event) => {
       workerScope.postMessage({
         type: "ready",
         model: "pose_landmarker_full",
-        version: `@mediapipe/tasks-vision@1.0.1 (${LOCAL_WORKER_RUNTIME_REVISION})`,
+        version: `@mediapipe/tasks-vision@1.0.1 (${activeDelegate}; ${LOCAL_WORKER_RUNTIME_REVISION})`,
       });
     } catch (error) {
       workerScope.postMessage({

@@ -263,7 +263,11 @@ label:has(input:focus-visible) {
 
 .preview-wrap {
   position: relative;
+  align-self: start;
+  width: 100%;
+  min-width: 0;
   min-height: 31rem;
+  aspect-ratio: 3 / 4;
   background: #10221c;
 }
 
@@ -367,6 +371,12 @@ label:has(input:focus-visible) {
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.portrait-capture-note {
+  padding: 0.55rem 0.65rem;
+  border-left: 2px solid #b8d9c6;
+  background: #f2f8f3;
 }
 
 .controls-panel {
@@ -757,10 +767,10 @@ label:has(input:focus-visible) {
   .preview-wrap {
     width: 100%;
     min-width: 0;
-    height: min(70svh, calc((100vw - 1rem) * 4 / 3));
-    min-height: 22rem;
+    height: min(70svh, calc((100vw - 1rem) * 16 / 9));
+    min-height: 0;
     max-height: 38rem;
-    aspect-ratio: 3 / 4;
+    aspect-ratio: 9 / 16;
   }
 
   .controls-panel {
@@ -853,6 +863,12 @@ label:has(input:focus-visible) {
     border: 1px solid #b8d9c6;
     border-radius: 0.55rem;
     background: #f2f8f3;
+  }
+
+  .portrait-capture-note {
+    border-left: 0;
+    border: 1px solid #b8d9c6;
+    border-radius: 0.55rem;
   }
 }
 
