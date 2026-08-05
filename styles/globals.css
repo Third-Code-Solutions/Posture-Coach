@@ -274,7 +274,7 @@ label:has(input:focus-visible) {
   inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .preview-video {
@@ -286,7 +286,7 @@ label:has(input:focus-visible) {
 .preview-image {
   z-index: 1;
   opacity: 0;
-  object-fit: cover;
+  object-fit: contain;
   transition: opacity 180ms ease;
 }
 
@@ -539,6 +539,7 @@ label:has(input:focus-visible) {
 }
 
 .result-cell {
+  min-width: 0;
   min-height: 5.4rem;
   padding: 0.9rem 1rem;
   border-right: 1px solid var(--line);
@@ -559,6 +560,7 @@ label:has(input:focus-visible) {
 }
 
 .result-value {
+  overflow-wrap: anywhere;
   color: var(--ink);
   font-size: 0.88rem;
   font-weight: 800;
@@ -753,7 +755,8 @@ label:has(input:focus-visible) {
   }
 
   .preview-wrap {
-    min-height: 21rem;
+    min-height: clamp(22rem, 70svh, 38rem);
+    aspect-ratio: 3 / 4;
   }
 
   .controls-panel {
@@ -766,7 +769,7 @@ label:has(input:focus-visible) {
   }
 
   .mode-button {
-    min-height: 2.15rem;
+    min-height: 2.75rem;
     font-size: 0.72rem;
   }
 
@@ -779,12 +782,24 @@ label:has(input:focus-visible) {
   }
 
   .result-strip {
-    grid-template-columns: 1.35fr repeat(3, 0.75fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .result-cell {
     min-height: 4.7rem;
     padding: 0.72rem 0.6rem;
+  }
+
+  .result-cell:nth-child(odd) {
+    border-right: 1px solid var(--line);
+  }
+
+  .result-cell:nth-child(even) {
+    border-right: 0;
+  }
+
+  .result-cell:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--line);
   }
 
   .result-label {
@@ -813,6 +828,27 @@ label:has(input:focus-visible) {
 
   .footer-note p + p {
     margin-top: 0.65rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .page-shell {
+    width: min(calc(100% - 1rem), 560px);
+  }
+
+  .workspace-header {
+    flex-wrap: wrap;
+  }
+
+  .source-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .mobile-capture-note {
+    padding: 0.55rem 0.65rem;
+    border: 1px solid #b8d9c6;
+    border-radius: 0.55rem;
+    background: #f2f8f3;
   }
 }
 

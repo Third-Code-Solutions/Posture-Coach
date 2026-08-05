@@ -161,6 +161,38 @@ test.describe("privacy-first posture coach smoke", () => {
     }
   });
 
+  test("keeps the full-frame preview and touch controls usable on phones", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/");
+
+    await expect(page.locator(".mobile-capture-note")).toBeVisible();
+    const layout = await page.evaluate(() => {
+      const preview = document.querySelector<HTMLElement>(".preview-wrap");
+      const modeButton = document.querySelector<HTMLElement>(".mode-button");
+      const sourceActions = document.querySelector<HTMLElement>(".source-actions");
+      const video = document.querySelector<HTMLVideoElement>(".preview-video");
+      const image = document.querySelector<HTMLImageElement>(".preview-image");
+      return {
+        documentWidth: document.documentElement.scrollWidth,
+        viewportWidth: document.documentElement.clientWidth,
+        previewWidth: preview?.getBoundingClientRect().width ?? 0,
+        previewHeight: preview?.getBoundingClientRect().height ?? 0,
+        modeButtonHeight: modeButton?.getBoundingClientRect().height ?? 0,
+        sourceColumns: sourceActions ? getComputedStyle(sourceActions).gridTemplateColumns : "",
+        videoObjectFit: video ? getComputedStyle(video).objectFit : "",
+        imageObjectFit: image ? getComputedStyle(image).objectFit : "",
+      };
+    });
+
+    expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth);
+    expect(layout.previewWidth).toBeGreaterThan(300);
+    expect(layout.previewHeight).toBeGreaterThan(500);
+    expect(layout.modeButtonHeight).toBeGreaterThanOrEqual(44);
+    expect(layout.sourceColumns.trim().split(/\s+/)).toHaveLength(1);
+    expect(layout.videoObjectFit).toBe("contain");
+    expect(layout.imageObjectFit).toBe("contain");
+  });
+
   test("calibrates every exercise mode through the local upload path", async ({ page }) => {
     test.setTimeout(120_000);
     const modes = ["Bodyweight squat", "Plank", "Push-up", "Lunge", "Bicep curl"];

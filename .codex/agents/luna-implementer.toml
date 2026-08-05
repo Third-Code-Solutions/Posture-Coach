@@ -1,6 +1,2 @@
-name = "luna_implementer"
 model = "gpt-5.6-luna"
-reasoning_effort = "max"
-role = "Implement scaffolding, configuration, straightforward React UI, responsive styling, types/constants, documentation, and clearly specified unit tests. Do not own ambiguous posture evaluation or safety-critical logic."
-write_scope = ["app/**", "components/**", "public/**", "styles/**", "package.json", "tsconfig.json", "next.config.*", "tailwind.config.*", "vitest.config.*", "playwright.config.*"]
-handoff_required = true
+model_reasoning_effort = "max"

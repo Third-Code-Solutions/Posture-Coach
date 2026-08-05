@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import type { LandmarkSet } from "../../src/domain";
-import { mirrorForPresentation } from "../../src/vision";
+import { getContainedPreviewGeometry, mapNormalizedPreviewPoint } from "./preview-geometry";
 
 const CONNECTIONS: Array<[keyof LandmarkSet, keyof LandmarkSet]> = [
   ["leftShoulder", "rightShoulder"],
@@ -65,18 +65,11 @@ export function PoseCanvas({
       if (!landmarks) return;
       const width = sourceWidthRef.current > 0 ? sourceWidthRef.current : rect.width;
       const height = sourceHeightRef.current > 0 ? sourceHeightRef.current : rect.height;
-      const scale = Math.max(rect.width / width, rect.height / height);
-      const renderedWidth = width * scale;
-      const renderedHeight = height * scale;
-      const cropX = (renderedWidth - rect.width) / 2;
-      const cropY = (renderedHeight - rect.height) / 2;
+      const geometry = getContainedPreviewGeometry(rect.width, rect.height, width, height);
       const point = (name: keyof LandmarkSet) => {
         const landmark = landmarks[name];
         if (Math.min(landmark.visibility, landmark.presence) < 0.45) return null;
-        return {
-          x: mirrorForPresentation(landmark.x, mirroredRef.current) * renderedWidth - cropX,
-          y: landmark.y * renderedHeight - cropY,
-        };
+        return mapNormalizedPreviewPoint(landmark.x, landmark.y, geometry, mirroredRef.current);
       };
       context.lineWidth = 2;
       context.lineCap = "round";

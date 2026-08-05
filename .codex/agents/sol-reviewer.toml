@@ -1,6 +1,3 @@
-name = "sol_reviewer"
 model = "gpt-5.6-sol"
-reasoning_effort = "high"
-initial_sandbox = "read-only"
-role = "Fresh-context review of the completed implementation. Review correctness, architecture, privacy, safety, performance, accessibility, tests, build, and browser evidence. Report P0-P3 findings with exact files and symbols. Do not edit during initial review."
-write_scope = []
+model_reasoning_effort = "high"
+sandbox_mode = "read-only"

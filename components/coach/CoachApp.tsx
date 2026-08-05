@@ -24,6 +24,7 @@ import {
 } from "../../src/domain";
 import {
   createObservation,
+  getCameraConstraints,
   getLocalMediaKind,
   PoseWorkerClient,
   PoseWorkerResponse,
@@ -121,6 +122,30 @@ function cameraGuidance(mode: AnalysisMode, view: CameraView): string {
   return view === "side"
     ? "Side profile: place the camera at hip height, far enough back to keep your full body and hands or feet visible."
     : "Front view: place the camera at hip height and keep both sides of your body visible with even light.";
+}
+
+function waitForVideoMetadata(video: HTMLVideoElement): Promise<void> {
+  if (video.videoWidth > 0 && video.videoHeight > 0) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      video.removeEventListener("loadedmetadata", handleLoadedMetadata);
+      video.removeEventListener("error", handleError);
+    };
+    const handleLoadedMetadata = () => {
+      cleanup();
+      if (video.videoWidth > 0 && video.videoHeight > 0) {
+        resolve();
+      } else {
+        reject(new Error("Video metadata did not include a usable frame size."));
+      }
+    };
+    const handleError = () => {
+      cleanup();
+      reject(new Error("Video metadata could not be loaded."));
+    };
+    video.addEventListener("loadedmetadata", handleLoadedMetadata, { once: true });
+    video.addEventListener("error", handleError, { once: true });
+  });
 }
 
 function unsupportedViewFeedback(mode: AnalysisMode, view: CameraView): FeedbackMessage {
@@ -437,6 +462,7 @@ export function CoachApp() {
     const video = videoRef.current;
     if (!video) return;
     try {
+      await waitForVideoMetadata(video);
       await video.play();
       if (!isCurrentVideoSource(video, token)) return;
       setSourceSize({ width: video.videoWidth, height: video.videoHeight });
@@ -520,10 +546,20 @@ export function CoachApp() {
     pendingCameraRequestRef.current = requestId;
     const sourceEpoch = sourceEpochRef.current;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
-      });
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(
+          getCameraConstraints({ width: window.innerWidth, height: window.innerHeight }),
+        );
+      } catch (caught) {
+        if (!(caught instanceof DOMException) || caught.name !== "OverconstrainedError") {
+          throw caught;
+        }
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { facingMode: { ideal: "user" } },
+        });
+      }
       if (
         pendingCameraRequestRef.current !== requestId ||
         sourceEpoch !== sourceEpochRef.current ||
@@ -551,6 +587,7 @@ export function CoachApp() {
       const video = videoRef.current;
       if (!video) throw new Error("Preview is not ready.");
       video.srcObject = stream;
+      video.autoplay = true;
       video.muted = true;
       video.playsInline = true;
       await handleVideoReady(sourceToken);
@@ -931,6 +968,7 @@ export function CoachApp() {
                 ref={videoRef}
                 className={`preview-video ${videoVisible ? "is-visible" : ""} ${mirrored ? "is-mirrored" : ""}`}
                 aria-label="Local posture preview"
+                autoPlay
                 playsInline
                 muted
               />
@@ -953,6 +991,7 @@ export function CoachApp() {
                     <strong>Start when you’re ready.</strong>
                     <span>
                       Center one person in frame, keep your full body visible, and use even light.
+                      On a phone, step back until your head and feet stay inside the frame.
                     </span>
                   </div>
                 </div>
@@ -993,6 +1032,10 @@ export function CoachApp() {
                   <option value="unknown">I’m not sure yet</option>
                 </select>
                 <p className="positioning-note">{cameraGuidance(mode, view)}</p>
+                <p className="positioning-note mobile-capture-note">
+                  Full-body tip: use portrait orientation, place your phone on a stable surface, and
+                  step back until your head and feet stay inside the frame.
+                </p>
               </div>
               <label className="calibration-row">
                 <input

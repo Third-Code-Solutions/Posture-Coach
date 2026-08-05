@@ -5,16 +5,20 @@ multi_agent = true
 
 [agents]
 enabled = true
-max_parallel = 3
+max_threads = 3
 
 [agents.sol_orchestrator]
-config = ".codex/agents/sol-orchestrator.toml"
+description = "Own requirements, architecture, acceptance criteria, integration, final validation, and reviewer coordination. Do not perform routine implementation unless integration requires it."
+config_file = "agents/sol-orchestrator.toml"
 
 [agents.luna_implementer]
-config = ".codex/agents/luna-implementer.toml"
+description = "Implement scaffolding, configuration, UI, responsive styling, types, constants, documentation, and simple tests. Own app, component, public, styles, package, TypeScript, and test-configuration changes."
+config_file = "agents/luna-implementer.toml"
 
 [agents.terra_implementer]
-config = ".codex/agents/terra-implementer.toml"
+description = "Implement MediaPipe integration, camera/video processing, landmark normalization, confidence/smoothing, geometry, state machines, evaluators, performance work, and complex tests."
+config_file = "agents/terra-implementer.toml"
 
 [agents.sol_reviewer]
-config = ".codex/agents/sol-reviewer.toml"
+description = "Perform a fresh read-only review of correctness, architecture, privacy, safety, performance, accessibility, tests, build, and browser evidence. Report P0-P3 findings with exact files and symbols."
+config_file = "agents/sol-reviewer.toml"
