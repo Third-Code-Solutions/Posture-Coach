@@ -186,7 +186,8 @@ test.describe("privacy-first posture coach smoke", () => {
 
     expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth);
     expect(layout.previewWidth).toBeGreaterThan(300);
-    expect(layout.previewHeight).toBeGreaterThan(500);
+    expect(layout.previewWidth).toBeLessThanOrEqual(layout.viewportWidth);
+    expect(layout.previewHeight).toBeGreaterThan(450);
     expect(layout.modeButtonHeight).toBeGreaterThanOrEqual(44);
     expect(layout.sourceColumns.trim().split(/\s+/)).toHaveLength(1);
     expect(layout.videoObjectFit).toBe("contain");

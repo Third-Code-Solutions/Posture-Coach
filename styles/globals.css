@@ -755,7 +755,11 @@ label:has(input:focus-visible) {
   }
 
   .preview-wrap {
-    min-height: clamp(22rem, 70svh, 38rem);
+    width: 100%;
+    min-width: 0;
+    height: min(70svh, calc((100vw - 1rem) * 4 / 3));
+    min-height: 22rem;
+    max-height: 38rem;
     aspect-ratio: 3 / 4;
   }
 
