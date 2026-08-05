@@ -78,7 +78,11 @@ try {
       throw new Error(`Root response is missing security header: ${header}`);
     }
   }
-  if (!rootResponse.headers.get("content-security-policy")?.includes("'wasm-unsafe-eval'")) {
+  const contentSecurityPolicy = rootResponse.headers.get("content-security-policy") ?? "";
+  if (
+    !contentSecurityPolicy.includes("'wasm-unsafe-eval'") ||
+    !contentSecurityPolicy.includes("'unsafe-eval'")
+  ) {
     throw new Error("Content-Security-Policy must allow local WebAssembly inference");
   }
 

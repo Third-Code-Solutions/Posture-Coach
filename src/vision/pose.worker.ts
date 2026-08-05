@@ -3,6 +3,7 @@ import type { PoseLandmarkerResult } from "@mediapipe/tasks-vision";
 import type { PoseWorkerRequest, PoseWorkerResponse } from "./protocol";
 
 const nativeFetch = globalThis.fetch.bind(globalThis);
+const LOCAL_WORKER_RUNTIME_REVISION = "2026-08-05-csp";
 
 function isTelemetryRequest(input: RequestInfo | URL): boolean {
   const url = typeof input === "string" ? input : "url" in input ? input.url : input.href;
@@ -100,7 +101,7 @@ workerScope.onmessage = async (event) => {
       workerScope.postMessage({
         type: "ready",
         model: "pose_landmarker_full",
-        version: "@mediapipe/tasks-vision@1.0.1",
+        version: `@mediapipe/tasks-vision@1.0.1 (${LOCAL_WORKER_RUNTIME_REVISION})`,
       });
     } catch (error) {
       workerScope.postMessage({
