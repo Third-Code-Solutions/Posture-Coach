@@ -78,6 +78,9 @@ try {
       throw new Error(`Root response is missing security header: ${header}`);
     }
   }
+  if (!rootResponse.headers.get("content-security-policy")?.includes("'wasm-unsafe-eval'")) {
+    throw new Error("Content-Security-Policy must allow local WebAssembly inference");
+  }
 
   const modelResponse = await expectStatus("/models/pose_landmarker_full.task", 200);
   if (modelResponse.headers.get("content-type") !== "application/octet-stream") {
