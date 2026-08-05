@@ -625,6 +625,64 @@ label:has(input:focus-visible) {
   line-height: 1.5;
 }
 
+.feedback-evidence {
+  margin-top: 0.75rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid rgba(26, 47, 38, 0.12);
+}
+
+.feedback-evidence summary {
+  cursor: pointer;
+  color: var(--green);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.feedback-evidence-entry {
+  margin-top: 0.65rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid rgba(26, 47, 38, 0.12);
+  border-radius: 0.55rem;
+  background: rgb(255 255 255 / 62%);
+}
+
+.feedback-evidence-entry > strong {
+  color: var(--ink);
+  font-size: 0.72rem;
+}
+
+.feedback-evidence-entry p {
+  margin-top: 0.38rem;
+  font-size: 0.7rem;
+}
+
+.feedback-evidence-entry ul {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0.5rem 0 0;
+  padding-left: 1rem;
+}
+
+.feedback-evidence-entry li {
+  color: var(--ink-muted);
+  font-size: 0.68rem;
+}
+
+.feedback-evidence-entry small {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--ink-muted);
+  font-size: 0.62rem;
+  line-height: 1.4;
+}
+
+.feedback-evidence-entry a {
+  color: var(--green);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
 .session-summary {
   padding: 1.15rem 1.35rem 1.25rem;
   border-top: 1px solid var(--line);

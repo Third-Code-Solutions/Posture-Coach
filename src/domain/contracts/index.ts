@@ -144,6 +144,7 @@ export interface FeedbackMessage {
   title: string;
   body: string;
   issueCode?: IssueCode;
+  evidenceIds?: readonly string[];
 }
 
 export interface EvaluationResult {

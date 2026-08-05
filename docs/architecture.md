@@ -13,10 +13,12 @@ video or image element -> ImageBitmap -> PoseWorkerClient -> dedicated MediaPipe
                                                        |
                   smoothing -> calibration/view gate -> geometry -> mode evaluator
                                                        |
-                              deterministic priority resolver -> React snapshot
+                              deterministic priority resolver -> local evidence registry -> React snapshot
 ```
 
 `src/domain/**` has no React, DOM, MediaPipe, network, randomness, or wall-clock dependencies. All timestamps enter as arguments. Presentation mirroring is applied only in `PoseCanvas`; canonical left/right landmark labels remain unchanged.
+
+`src/knowledge/posture-evidence.ts` is a static, versioned cache of paraphrased posture guidance and direct source metadata. It performs no fetches. Evaluator feedback carries source IDs, and the UI resolves those IDs locally so a cue remains inspectable without an API key or a live research service.
 
 The MediaPipe Tasks Web landmark type provides visibility but not a separate presence field. The adapter preserves an explicit presence value when a runtime supplies one and otherwise uses visibility as the conservative presence proxy before confidence gating.
 

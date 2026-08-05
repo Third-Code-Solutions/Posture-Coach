@@ -32,6 +32,7 @@ import {
   PoseWorkerClient,
   PoseWorkerResponse,
 } from "../../src/vision";
+import { evidenceIdsForIssue } from "../../src/knowledge";
 
 type SourceState = "idle" | "requesting" | "active" | "loading" | "complete" | "error";
 type SourceKind = "camera" | "upload" | "image";
@@ -160,6 +161,7 @@ function unsupportedViewFeedback(mode: AnalysisMode, view: CameraView): Feedback
     tone: "guide",
     title: "Set your view",
     body: `${MODE_LABELS[mode]} needs ${requiredView}. Choose a supported camera view before calibrating.`,
+    evidenceIds: evidenceIdsForIssue("positioning"),
   };
 }
 
@@ -1043,7 +1045,8 @@ export function CoachApp() {
                     <strong>Start when you’re ready.</strong>
                     <span>
                       Center one person in frame, keep your full body visible, and use even light.
-                      Keep the camera upright and step back until your head and feet stay inside the frame.
+                      Keep the camera upright and step back until your head and feet stay inside the
+                      frame.
                     </span>
                   </div>
                 </div>

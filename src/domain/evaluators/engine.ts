@@ -19,6 +19,7 @@ import {
 import { assessConfidence } from "../confidence";
 import { LandmarkSmoother, PersistenceGate } from "../temporal";
 import { angleAt, isFinitePoint, midpoint, verticalDeviation } from "../geometry";
+import { evidenceIdsForIssue } from "../../knowledge";
 
 type RawIssue = Omit<EvaluationIssue, "persistenceMs">;
 type ComputedFrame = {
@@ -732,6 +733,7 @@ function positioningFeedback(mode: AnalysisMode, view: CameraView): FeedbackMess
     tone: "guide",
     title: "Set your view",
     body: `Use a ${side} view with your full body visible, then calibrate. This keeps advice evidence-aware.`,
+    evidenceIds: evidenceIdsForIssue("positioning"),
   };
 }
 
@@ -783,6 +785,7 @@ function feedbackFor(result: {
       tone: "guide",
       title: "Rep not counted",
       body: "Stay in the movement phase a little longer and keep the next repetition controlled.",
+      evidenceIds: ["controlled-exercise"],
     };
   }
   if (result.rejectedRep === "range_not_reached") {
@@ -792,6 +795,7 @@ function feedbackFor(result: {
       tone: "guide",
       title: "Rep not counted",
       body: "Move through the selected range with control before returning to the start position.",
+      evidenceIds: ["comfortable-range"],
     };
   }
   if (result.rejectedRep === "alignment_not_stable") {
@@ -801,6 +805,7 @@ function feedbackFor(result: {
       tone: "guide",
       title: "Rep not counted",
       body: "Keep the relevant joints aligned through the full repetition before returning to the start position.",
+      evidenceIds: ["controlled-exercise"],
     };
   }
   if (result.issues.length > 0) {
@@ -817,6 +822,7 @@ function feedbackFor(result: {
       title: first.label,
       body: `${first.correction} ${CAUTIOUS}`,
       issueCode: first.code,
+      evidenceIds: evidenceIdsForIssue(first.code),
     };
   }
   if (result.validRep)
@@ -826,6 +832,7 @@ function feedbackFor(result: {
       tone: "positive",
       title: "Rep logged",
       body: "Nice. Keep the same controlled rhythm.",
+      evidenceIds: ["controlled-exercise"],
     };
   return {
     id: "ready",
