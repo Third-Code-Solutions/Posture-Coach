@@ -1,0 +1,13 @@
+.next
+node_modules
+out
+playwright-report
+test-results
+pnpm-lock.yaml
+.codex/
+.playwright-cli/
+.playwright-mcp/
+tasks/
+public/wasm/
+public/models/
+*.tsbuildinfo

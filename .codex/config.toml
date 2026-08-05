@@ -1,0 +1,20 @@
+# Project-scoped orchestration configuration for AI Body Posture Coach.
+
+[features]
+multi_agent = true
+
+[agents]
+enabled = true
+max_parallel = 3
+
+[agents.sol_orchestrator]
+config = ".codex/agents/sol-orchestrator.toml"
+
+[agents.luna_implementer]
+config = ".codex/agents/luna-implementer.toml"
+
+[agents.terra_implementer]
+config = ".codex/agents/terra-implementer.toml"
+
+[agents.sol_reviewer]
+config = ".codex/agents/sol-reviewer.toml"

@@ -1,0 +1,55 @@
+{
+  "name": "posture-coach",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Privacy-first browser-local posture coaching MVP",
+  "packageManager": "pnpm@11.13.1",
+  "engines": {
+    "node": ">=20.9.0",
+    "pnpm": ">=11.13.1"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "serve out --single --listen 3000",
+    "start:railway": "node scripts/static-server.mjs",
+    "hosting:check": "pnpm build && node scripts/hosting-check.mjs",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "tsc --noEmit",
+    "test": "pnpm test:unit",
+    "test:unit": "vitest run --passWithNoTests",
+    "test:domain": "vitest run tests/domain --passWithNoTests",
+    "test:watch": "vitest",
+    "test:e2e": "pnpm build && playwright test",
+    "test:e2e:ui": "pnpm build && playwright test --ui",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test"
+  },
+  "dependencies": {
+    "@mediapipe/tasks-vision": "1.0.1",
+    "next": "15.5.22",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@next/eslint-plugin-next": "15.5.22",
+    "@playwright/test": "1.62.1",
+    "@tailwindcss/postcss": "4.3.3",
+    "@types/node": "26.1.2",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "@vitejs/plugin-react": "6.0.5",
+    "eslint": "9.39.5",
+    "jsdom": "30.0.1",
+    "postcss": "8.5.25",
+    "prettier": "3.9.6",
+    "serve": "14.2.6",
+    "tailwindcss": "4.3.3",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.65.0",
+    "vite": "8.2.0",
+    "vitest": "4.1.10"
+  }
+}

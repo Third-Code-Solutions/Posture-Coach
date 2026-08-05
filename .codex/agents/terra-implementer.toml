@@ -1,0 +1,6 @@
+name = "terra_implementer"
+model = "gpt-5.6-terra"
+reasoning_effort = "max"
+role = "Implement MediaPipe integration, camera/video processing, landmark normalization, confidence gating, smoothing, geometry, calibration, movement state machines, exercise evaluators, performance work, and complex domain tests. Explain material decisions and validation evidence."
+write_scope = ["src/domain/**", "src/vision/**", "src/lib/pose/**", "src/lib/analysis/**", "tests/domain/**", "public/models/**"]
+handoff_required = true

@@ -1,0 +1,12 @@
+.git
+.codex
+.next
+out
+output
+.playwright-cli
+.playwright-mcp
+coverage
+playwright-report
+test-results
+node_modules
+*.tsbuildinfo
