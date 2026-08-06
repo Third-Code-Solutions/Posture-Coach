@@ -21,6 +21,22 @@ export function getPortraitVideoConstraints(): MediaTrackConstraints {
   };
 }
 
+/**
+ * Lower-pressure portrait constraints for mobile browsers that reject the
+ * preferred resolution. The app still applies a local rotation when the
+ * browser returns landscape frames, so this fallback must keep portrait as an
+ * explicit preference instead of dropping to an unconstrained stream.
+ */
+export function getPortraitFallbackVideoConstraints(): MediaTrackConstraints {
+  return {
+    facingMode: { ideal: "user" },
+    width: { ideal: 480 },
+    height: { ideal: 854 },
+    aspectRatio: { ideal: PORTRAIT_CAMERA_ASPECT_RATIO },
+    frameRate: { ideal: 24, max: 30 },
+  };
+}
+
 export function getCameraConstraints(viewport: CaptureViewport): MediaStreamConstraints {
   void viewport;
   return {
@@ -36,10 +52,12 @@ export function isPortraitFrame(width: number, height: number): boolean {
 export async function preferPortraitTrack(track: MediaStreamTrack): Promise<boolean> {
   try {
     await track.applyConstraints(getPortraitVideoConstraints());
-    return true;
+    const settings = track.getSettings();
+    return isPortraitFrame(settings.width ?? 0, settings.height ?? 0);
   } catch {
-    // Some desktop webcams expose fixed landscape modes. The preview still
-    // contains the complete source and the caller can continue without a crop.
+    // Some cameras expose fixed modes. The caller keeps the stream and applies
+    // a local portrait transform when the device is compact and frames are
+    // landscape.
     return false;
   }
 }

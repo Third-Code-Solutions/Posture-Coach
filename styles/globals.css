@@ -308,6 +308,19 @@ label:has(input:focus-visible) {
   object-fit: contain;
 }
 
+.portrait-preview-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: none;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease;
+}
+
 .preview-video {
   z-index: 1;
   opacity: 0;
@@ -322,13 +335,19 @@ label:has(input:focus-visible) {
 }
 
 .preview-video.is-visible,
-.preview-image.is-visible {
+.preview-image.is-visible,
+.portrait-preview-canvas.is-visible {
   opacity: 1;
 }
 
 .preview-video.is-mirrored,
-.preview-image.is-mirrored {
+.preview-image.is-mirrored,
+.portrait-preview-canvas.is-mirrored {
   transform: scaleX(-1);
+}
+
+.preview-video.is-portrait-source-hidden {
+  opacity: 0;
 }
 
 .full-body-guide {
@@ -399,6 +418,10 @@ label:has(input:focus-visible) {
 .preview-canvas {
   z-index: 2;
   pointer-events: none;
+}
+
+.portrait-preview-canvas.is-visible {
+  display: block;
 }
 
 .preview-empty {

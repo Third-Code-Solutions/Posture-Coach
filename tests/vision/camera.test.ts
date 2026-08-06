@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   getCameraConstraints,
+  getPortraitFallbackVideoConstraints,
   getPortraitVideoConstraints,
   isCompactCaptureViewport,
   isPortraitFrame,
@@ -36,5 +37,15 @@ describe("camera capture constraints", () => {
     expect(isPortraitFrame(720, 1280)).toBe(true);
     expect(isPortraitFrame(720, 720)).toBe(true);
     expect(isPortraitFrame(1280, 720)).toBe(false);
+  });
+
+  it("keeps a lower-resolution fallback portrait-first", () => {
+    expect(getPortraitFallbackVideoConstraints()).toEqual({
+      facingMode: { ideal: "user" },
+      width: { ideal: 480 },
+      height: { ideal: 854 },
+      aspectRatio: { ideal: PORTRAIT_CAMERA_ASPECT_RATIO },
+      frameRate: { ideal: 24, max: 30 },
+    });
   });
 });
