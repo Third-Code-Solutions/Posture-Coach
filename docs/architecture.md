@@ -34,6 +34,8 @@ The evaluator uses required-landmark gates, camera-view declarations, calibratio
 
 The current browser surface shows one cue at a time, keeps camera activation behind a user action, and disposes tracks, workers, callbacks, object URLs, and transferred frames on session exit.
 
+Standing mode is a separate stationary evaluator. It requires head-to-ankle landmarks, calibrates a relaxed full-body baseline, and uses side-view head/trunk geometry plus front-view shoulder/hip geometry only when the selected view supports that signal. A steady result means the visible landmarks are close to that baseline; it is not a clinical normal/abnormal judgment.
+
 The worker also short-circuits the optional ODML telemetry request bundled by the MediaPipe runtime. The model and Wasm load from the app origin; runtime network validation showed only same-origin assets and the local upload object URL.
 
 When the page cannot create either WebGL 2 or WebGL 1, the worker does not start MediaPipe's WebGL-backed image upload path. It loads the vendored BlazePose Full TFJS model and WASM binaries from same-origin assets instead, preserving the 33-keypoint contract while trading throughput for compatibility. GPU-capable devices keep the MediaPipe path.

@@ -2,7 +2,7 @@ import { useRef } from "react";
 import type { AnalysisMode } from "../../src/domain";
 import { MODE_DESCRIPTIONS, MODE_LABELS } from "../../src/domain";
 
-const MODES: AnalysisMode[] = ["desk", "squat", "plank", "pushup", "lunge", "curl"];
+const MODES: AnalysisMode[] = ["standing", "desk", "squat", "plank", "pushup", "lunge", "curl"];
 
 export function ModeSelector({
   mode,

@@ -36,7 +36,7 @@ export const LANDMARK_NAMES = [
 
 export type LandmarkName = (typeof LANDMARK_NAMES)[number];
 
-export type AnalysisMode = "desk" | "squat" | "plank" | "pushup" | "lunge" | "curl";
+export type AnalysisMode = "standing" | "desk" | "squat" | "plank" | "pushup" | "lunge" | "curl";
 export type SourceKind = "camera" | "upload" | "image" | "fixture";
 export type CameraView = "front" | "side" | "three-quarter" | "unknown";
 export type MovementPhase = "ready" | "eccentric" | "bottom" | "concentric" | "hold" | "paused";
@@ -106,6 +106,9 @@ export interface CalibrationProfile {
 }
 
 export type IssueCode =
+  | "standing_head_alignment"
+  | "standing_trunk_alignment"
+  | "standing_lateral_asymmetry"
   | "head_forward"
   | "neck_inclination"
   | "shoulder_imbalance"
@@ -175,6 +178,7 @@ export interface SessionSummary {
 }
 
 export const MODE_LABELS: Record<AnalysisMode, string> = {
+  standing: "Standing posture",
   desk: "Desk posture",
   squat: "Bodyweight squat",
   plank: "Plank",
@@ -184,6 +188,7 @@ export const MODE_LABELS: Record<AnalysisMode, string> = {
 };
 
 export const MODE_DESCRIPTIONS: Record<AnalysisMode, string> = {
+  standing: "Check a relaxed full-body stance and learn one gentle adjustment at a time.",
   desk: "Check your seated alignment and build a calmer desk setup.",
   squat: "Practice controlled range and knee tracking.",
   plank: "Hold a long, supported body line.",
@@ -193,6 +198,7 @@ export const MODE_DESCRIPTIONS: Record<AnalysisMode, string> = {
 };
 
 export const SUPPORTED_VIEWS: Record<AnalysisMode, readonly CameraView[]> = {
+  standing: ["side", "front", "three-quarter"],
   desk: ["front", "side", "three-quarter"],
   squat: ["front", "side", "three-quarter"],
   plank: ["side"],
@@ -217,6 +223,19 @@ export function isObservedViewCompatible(
 }
 
 export const REQUIRED_LANDMARKS: Record<AnalysisMode, readonly LandmarkName[]> = {
+  standing: [
+    "nose",
+    "leftEar",
+    "rightEar",
+    "leftShoulder",
+    "rightShoulder",
+    "leftHip",
+    "rightHip",
+    "leftKnee",
+    "rightKnee",
+    "leftAnkle",
+    "rightAnkle",
+  ],
   desk: ["nose", "leftEar", "rightEar", "leftShoulder", "rightShoulder", "leftHip", "rightHip"],
   squat: [
     "leftShoulder",

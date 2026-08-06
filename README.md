@@ -1,6 +1,6 @@
 # Third Code Posture
 
-Privacy-first browser-local posture coaching for desk alignment and movement practice.
+Privacy-first browser-local posture coaching for relaxed standing, desk alignment, and movement practice.
 
 ## Run locally
 
@@ -39,7 +39,8 @@ In a second terminal, confirm `http://127.0.0.1:3001/healthz` returns `ok`, then
 
 ## Product boundaries
 
-- Desk posture and five exercise modes are educational coaching cues, not medical advice.
+- Relaxed standing, desk posture, and five exercise modes are educational coaching cues, not medical advice.
+- Standing mode calibrates a comfortable full-body baseline, then reports only persistent visible head, trunk, or side-to-side alignment tendencies supported by the selected camera view.
 - The app does not diagnose, promise clinical accuracy, or promise injury prevention.
 - Camera frames, uploaded video, uploaded images, landmarks, and session summaries remain in browser memory. There is no account, backend, analytics, paid AI API, or frame upload.
 - Still images run one local pose pass and show the landmark overlay. Movement coaching and repetition counts require a webcam or video sequence.

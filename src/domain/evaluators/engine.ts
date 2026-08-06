@@ -22,6 +22,7 @@ import { angleAt, isFinitePoint, midpoint, verticalDeviation } from "../geometry
 import { evidenceIdsForIssue } from "../../knowledge";
 
 type RawIssue = Omit<EvaluationIssue, "persistenceMs">;
+type ExerciseMode = Exclude<AnalysisMode, "desk" | "standing">;
 type ComputedFrame = {
   status: EvaluationResult["status"];
   phase: MovementPhase;
@@ -219,6 +220,26 @@ function calibrationFramingIssue(
   );
 }
 
+function standingFramingIssue(
+  observation: FrameObservation,
+  baseline: Readonly<Record<string, number>>,
+): RawIssue | null {
+  const torsoIssue = calibrationFramingIssue(observation, baseline);
+  if (torsoIssue) return torsoIssue;
+  const { landmarks } = observation;
+  const top = Math.min(landmarks.nose.y, landmarks.leftEar.y, landmarks.rightEar.y);
+  const bottom = Math.max(landmarks.leftAnkle.y, landmarks.rightAnkle.y);
+  if (top > 0.02 && bottom < 0.985) return null;
+  return issue(
+    "positioning",
+    "Keep your whole body visible",
+    Math.max(0.02 - top, bottom - 0.985, 0),
+    0,
+    2,
+    "Step back or lower the phone slightly so your head and both feet have a little space from the frame edges.",
+  );
+}
+
 function bodyLineAngle(observation: FrameObservation, side: "left" | "right"): number | null {
   const shoulder = observation.landmarks[`${side}Shoulder`];
   const hip = observation.landmarks[`${side}Hip`];
@@ -342,6 +363,15 @@ function geometryIsAvailable(mode: AnalysisMode, observation: FrameObservation):
   const { landmarks } = observation;
   const shoulderMidpoint = midpoint(landmarks.leftShoulder, landmarks.rightShoulder);
   const hipMidpoint = midpoint(landmarks.leftHip, landmarks.rightHip);
+  if (mode === "standing") {
+    return (
+      projectedSegmentIsAvailable(shoulderMidpoint, hipMidpoint) &&
+      angleAt(landmarks.leftHip, landmarks.leftKnee, landmarks.leftAnkle) !== null &&
+      angleAt(landmarks.rightHip, landmarks.rightKnee, landmarks.rightAnkle) !== null &&
+      (observation.cameraView === "front" ||
+        projectedSegmentIsAvailable(landmarks.rightEar, landmarks.rightShoulder))
+    );
+  }
   if (mode === "desk") {
     return (
       projectedSegmentIsAvailable(shoulderMidpoint, hipMidpoint) &&
@@ -373,7 +403,7 @@ function bounded(value: number, minimum: number, maximum: number): number {
 }
 
 function exerciseThresholds(
-  mode: Exclude<AnalysisMode, "desk">,
+  mode: ExerciseMode,
   baseline: Readonly<Record<string, number>>,
 ): { down: number; entry: number; up: number } {
   if (mode === "plank") return { down: 0, entry: 0, up: 0 };
@@ -410,7 +440,7 @@ function curlFlareThreshold(baseline: Readonly<Record<string, number>>): number 
   return Math.max(0.5, (baseline.elbowFlare ?? 0.28) + 0.22);
 }
 
-function alignmentIssueCodes(mode: Exclude<AnalysisMode, "desk" | "plank">): IssueCode[] {
+function alignmentIssueCodes(mode: Exclude<ExerciseMode, "plank">): IssueCode[] {
   if (mode === "squat") return ["squat_knee_alignment"];
   if (mode === "lunge") return ["lunge_alignment"];
   if (mode === "pushup") return ["pushup_body_line"];
@@ -418,7 +448,7 @@ function alignmentIssueCodes(mode: Exclude<AnalysisMode, "desk" | "plank">): Iss
 }
 
 function exerciseFrame(
-  mode: Exclude<AnalysisMode, "desk">,
+  mode: ExerciseMode,
   observation: FrameObservation,
   state: ExerciseState,
   baseline: Readonly<Record<string, number>>,
@@ -737,6 +767,131 @@ function positioningFeedback(mode: AnalysisMode, view: CameraView): FeedbackMess
   };
 }
 
+type StandingMetrics = {
+  torso: number;
+  bodyHeight: number;
+  headOffset: number;
+  bodyLean: number;
+  shoulderTilt: number;
+  hipTilt: number;
+};
+
+function standingMetrics(observation: FrameObservation): StandingMetrics {
+  const { landmarks } = observation;
+  const shoulders = midpoint(landmarks.leftShoulder, landmarks.rightShoulder);
+  const hips = midpoint(landmarks.leftHip, landmarks.rightHip);
+  const ankles = midpoint(landmarks.leftAnkle, landmarks.rightAnkle);
+  const ears = midpoint(landmarks.leftEar, landmarks.rightEar);
+  const torso = Math.max(0.001, Math.hypot(shoulders.x - hips.x, shoulders.y - hips.y));
+  const bodyHeight = Math.max(
+    0.001,
+    Math.max(landmarks.leftAnkle.y, landmarks.rightAnkle.y) -
+      Math.min(landmarks.nose.y, landmarks.leftEar.y, landmarks.rightEar.y),
+  );
+  return {
+    torso,
+    bodyHeight,
+    headOffset: (ears.x - shoulders.x) / torso,
+    bodyLean: Math.abs(shoulders.x - ankles.x) / bodyHeight,
+    shoulderTilt: (landmarks.leftShoulder.y - landmarks.rightShoulder.y) / torso,
+    hipTilt: (landmarks.leftHip.y - landmarks.rightHip.y) / torso,
+  };
+}
+
+function baselineNumber(
+  baseline: Readonly<Record<string, number>>,
+  key: string,
+  fallback = 0,
+): number {
+  const value = baseline[key];
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function standingIssues(
+  observation: FrameObservation,
+  baseline: Readonly<Record<string, number>>,
+): ComputedFrame {
+  const metrics = standingMetrics(observation);
+  const issues: RawIssue[] = [];
+  const baselineHeadOffset = baselineNumber(baseline, "standingHeadOffset");
+  const baselineBodyLean = baselineNumber(baseline, "standingBodyLean");
+  const baselineShoulderTilt = baselineNumber(baseline, "standingShoulderTilt");
+  const baselineHipTilt = baselineNumber(baseline, "standingHipTilt");
+  const headDrift = Math.abs(metrics.headOffset - baselineHeadOffset);
+  const bodyDrift = Math.abs(metrics.bodyLean - baselineBodyLean);
+  const lateralDrift = Math.max(
+    Math.abs(metrics.shoulderTilt - baselineShoulderTilt),
+    Math.abs(metrics.hipTilt - baselineHipTilt),
+  );
+
+  if (
+    (observation.cameraView === "side" || observation.cameraView === "three-quarter") &&
+    headDrift > 0.14 &&
+    Math.abs(metrics.headOffset) > 0.14
+  ) {
+    issues.push(
+      issue(
+        "standing_head_alignment",
+        "Head alignment drift",
+        headDrift,
+        0.14,
+        3,
+        "Gently bring your head back over your shoulders and keep your gaze level. Do not force your chin back.",
+      ),
+    );
+  }
+  if (
+    (observation.cameraView === "side" || observation.cameraView === "three-quarter") &&
+    bodyDrift > 0.08 &&
+    metrics.bodyLean > 0.08
+  ) {
+    issues.push(
+      issue(
+        "standing_trunk_alignment",
+        "Trunk alignment drift",
+        bodyDrift,
+        0.08,
+        2,
+        "Let your shoulders stack more comfortably over your hips and keep your knees easy instead of bracing rigidly.",
+      ),
+    );
+  }
+  if (
+    (observation.cameraView === "front" || observation.cameraView === "three-quarter") &&
+    lateralDrift > 0.12
+  ) {
+    issues.push(
+      issue(
+        "standing_lateral_asymmetry",
+        "Side-to-side difference",
+        lateralDrift,
+        0.12,
+        2,
+        "Level the camera, relax both shoulders, and let your weight settle evenly before trying to correct the shape.",
+      ),
+    );
+  }
+
+  return {
+    status: "valid",
+    phase: "ready",
+    issues,
+    metrics: {
+      torso: metrics.torso,
+      bodyHeight: metrics.bodyHeight,
+      headOffset: metrics.headOffset,
+      bodyLean: metrics.bodyLean,
+      shoulderTilt: metrics.shoulderTilt,
+      hipTilt: metrics.hipTilt,
+      headDrift,
+      bodyDrift,
+      lateralDrift,
+    },
+    validRep: false,
+    rejectedRep: null,
+  };
+}
+
 function feedbackFor(result: {
   status: EvaluationResult["status"];
   issues: readonly EvaluationIssue[];
@@ -834,6 +989,15 @@ function feedbackFor(result: {
       body: "Nice. Keep the same controlled rhythm.",
       evidenceIds: ["controlled-exercise"],
     };
+  if (result.mode === "standing")
+    return {
+      id: "standing-steady",
+      priority: 20,
+      tone: "positive",
+      title: "Standing alignment looks steady",
+      body: "These visible landmarks are close to your relaxed standing baseline. Keep breathing, avoid bracing, and change position regularly.",
+      evidenceIds: ["standing-alignment", "static-posture"],
+    };
   return {
     id: "ready",
     priority: 10,
@@ -848,7 +1012,7 @@ export class PostureEngine {
   // low-light/mobile landmark jitter from becoming false coaching cues.
   private readonly smoother = new LandmarkSmoother(0.58);
   private readonly gates = new Map<IssueCode, PersistenceGate>();
-  private readonly exercises = new Map<Exclude<AnalysisMode, "desk">, ExerciseState>();
+  private readonly exercises = new Map<ExerciseMode, ExerciseState>();
   private mode: AnalysisMode = "desk";
   private calibrationStable = false;
   private calibrationProfile: CalibrationProfile | null = null;
@@ -939,7 +1103,9 @@ export class PostureEngine {
     const geometryAvailable = geometryIsAvailable(this.mode, smoothed);
     const framingIssue =
       calibrationMatches && calibrationProfile && geometryAvailable
-        ? calibrationFramingIssue(smoothed, calibrationProfile.baseline)
+        ? this.mode === "standing"
+          ? standingFramingIssue(smoothed, calibrationProfile.baseline)
+          : calibrationFramingIssue(smoothed, calibrationProfile.baseline)
         : null;
     if (
       !calibrationMatches ||
@@ -982,14 +1148,16 @@ export class PostureEngine {
     }
 
     const raw =
-      this.mode === "desk"
-        ? deskIssues(smoothed, this.calibrationProfile?.baseline ?? {})
-        : exerciseFrame(
-            this.mode,
-            smoothed,
-            this.exerciseState(this.mode),
-            this.calibrationProfile?.baseline ?? {},
-          );
+      this.mode === "standing"
+        ? standingIssues(smoothed, this.calibrationProfile?.baseline ?? {})
+        : this.mode === "desk"
+          ? deskIssues(smoothed, this.calibrationProfile?.baseline ?? {})
+          : exerciseFrame(
+              this.mode,
+              smoothed,
+              this.exerciseState(this.mode),
+              this.calibrationProfile?.baseline ?? {},
+            );
     if (Object.values(raw.metrics).some((value) => !Number.isFinite(value))) {
       this.interruptActiveExercise();
       const invalidGeometryResult = {
@@ -1038,15 +1206,31 @@ export class PostureEngine {
     return rawIssues.flatMap((candidate) => {
       const gate =
         this.gates.get(candidate.code) ??
-        new PersistenceGate(candidate.code === "prolonged_slouch" ? 15_000 : 900);
+        new PersistenceGate(
+          candidate.code === "prolonged_slouch"
+            ? 15_000
+            : candidate.code.startsWith("standing_")
+              ? 650
+              : 900,
+        );
       this.gates.set(candidate.code, gate);
       return gate.update(true, timestampMs)
-        ? [{ ...candidate, persistenceMs: candidate.code === "prolonged_slouch" ? 15_000 : 900 }]
+        ? [
+            {
+              ...candidate,
+              persistenceMs:
+                candidate.code === "prolonged_slouch"
+                  ? 15_000
+                  : candidate.code.startsWith("standing_")
+                    ? 650
+                    : 900,
+            },
+          ]
         : [];
     });
   }
 
-  private exerciseState(mode: Exclude<AnalysisMode, "desk">): ExerciseState {
+  private exerciseState(mode: ExerciseMode): ExerciseState {
     const existing = this.exercises.get(mode);
     if (existing) return existing;
     const state = defaultExerciseState();
@@ -1055,7 +1239,9 @@ export class PostureEngine {
   }
 
   private currentRepCount(): number {
-    return this.mode === "desk" ? 0 : this.exerciseState(this.mode).repCount;
+    return this.mode === "desk" || this.mode === "standing"
+      ? 0
+      : this.exerciseState(this.mode).repCount;
   }
 
   private resetTemporalState(): void {
@@ -1063,7 +1249,8 @@ export class PostureEngine {
     this.lastObservationTimestamp = -1;
     for (const gate of this.gates.values()) gate.reset();
     this.gates.clear();
-    const state = this.mode === "desk" ? null : this.exerciseState(this.mode);
+    const state =
+      this.mode === "desk" || this.mode === "standing" ? null : this.exerciseState(this.mode);
     if (state) {
       state.phase = "ready";
       state.candidate = false;
@@ -1078,7 +1265,7 @@ export class PostureEngine {
   }
 
   private interruptActiveExercise(): void {
-    if (this.mode === "desk") return;
+    if (this.mode === "desk" || this.mode === "standing") return;
     const state = this.exerciseState(this.mode);
     state.candidate = false;
     state.candidateStartedAtMs = null;

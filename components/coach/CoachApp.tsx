@@ -46,7 +46,7 @@ const initialFeedback: FeedbackMessage = {
   priority: 100,
   tone: "guide",
   title: "Calibrate before coaching",
-  body: "Choose a source, get your full body in frame, then hold still for a moment. Advice stays paused until the evidence is steady.",
+  body: "Choose a source, get your full body in a portrait frame, settle into a comfortable position, then hold still for a moment. Advice stays paused until the evidence is steady.",
 };
 
 function imageFeedback(status: ImageStatus | null): FeedbackMessage {
@@ -116,7 +116,15 @@ function cameraGuidance(mode: AnalysisMode, view: CameraView): string {
     return "Side profile required: place the camera at hip height, far enough back to keep your full body and hands or feet visible.";
   }
   if (view === "three-quarter") {
+    if (mode === "standing") {
+      return "Portrait three-quarter view: turn slightly toward the camera, keep your head and both feet visible with a little margin, and stand relaxed.";
+    }
     return "Three-quarter view: turn slightly toward the camera, place it at hip or shoulder height, and keep both shoulders, hips, and the active joints visible.";
+  }
+  if (mode === "standing") {
+    return view === "side"
+      ? "Portrait side profile: place the phone at hip height, far enough back to show your head and both feet with a little margin, then stand relaxed."
+      : "Portrait front view: place the phone level at hip height, far enough back to show your head and both feet, and let your arms hang naturally.";
   }
   if (mode === "desk") {
     return view === "side"
@@ -203,7 +211,7 @@ function rejectionReasonsCopy(summary: SessionSummary): string | null {
 }
 
 export function CoachApp() {
-  const [mode, setMode] = useState<AnalysisMode>("desk");
+  const [mode, setMode] = useState<AnalysisMode>("standing");
   const [view, setView] = useState<CameraView>("side");
   const [mirrored, setMirrored] = useState(true);
   const [sourceState, setSourceState] = useState<SourceState>("idle");
@@ -213,7 +221,7 @@ export function CoachApp() {
   const [result, setResult] = useState<EvaluationResult | null>(null);
   const [landmarks, setLandmarks] = useState<FrameObservation["landmarks"] | null>(null);
   const [calibration, setCalibration] = useState<CalibrationProfile>(() =>
-    createCalibrationProfile("desk", "side", true),
+    createCalibrationProfile("standing", "side", true),
   );
   const [calibrating, setCalibrating] = useState(false);
   const [sessionSeconds, setSessionSeconds] = useState(0);
@@ -1044,8 +1052,8 @@ export function CoachApp() {
             Posture practice, with <em>signal.</em>
           </h1>
           <p className="hero-lede">
-            Third Code Posture is a quiet, browser-local coach for desk posture and movement
-            practice. Clear cues, visible evidence, no account, no cloud upload.
+            Third Code Posture is a quiet, browser-local coach for relaxed standing, desk posture,
+            and movement practice. Clear cues, visible evidence, no account, no cloud upload.
           </p>
           <div className="trust-row" aria-label="Product guarantees">
             <span className="trust-note">{iconShield} No frames leave this tab</span>
@@ -1206,7 +1214,11 @@ export function CoachApp() {
                         ? "Calibration ready"
                         : "Calibration needed"}
                   </strong>
-                  {calibrating ? " Hold a relaxed position" : " View-specific baseline"}
+                  {calibrating
+                    ? mode === "standing"
+                      ? " Stand naturally; do not force alignment"
+                      : " Hold a relaxed position"
+                    : " View-specific baseline"}
                 </span>
               </div>
               {!viewSupported && (

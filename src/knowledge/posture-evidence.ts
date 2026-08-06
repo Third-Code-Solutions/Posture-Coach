@@ -55,6 +55,38 @@ export const POSTURE_EVIDENCE_SOURCES = [
     url: "https://www.osha.gov/etools/computer-workstations/positions",
   },
   {
+    id: "healthdirect-posture",
+    title: "How to improve your posture",
+    publisher: "Healthdirect Australia",
+    publishedOrUpdated: "Accessed 2026-08-06",
+    evidenceType: "clinical-guidance",
+    url: "https://www.healthdirect.gov.au/how-to-improve-your-posture",
+  },
+  {
+    id: "nih-posture",
+    title: "Getting It Straight About Posture",
+    publisher: "National Institutes of Health, NIH News in Health",
+    publishedOrUpdated: "2017-08",
+    evidenceType: "government-guideline",
+    url: "https://newsinhealth.nih.gov/2017/08/getting-it-straight",
+  },
+  {
+    id: "standing-alignment-study",
+    title: "Comparison of whole-body sagittal alignment in standing and sitting postures",
+    publisher: "European Spine Journal; indexed by PubMed",
+    publishedOrUpdated: "2019; prospective radiographic study",
+    evidenceType: "biomechanics-study",
+    url: "https://pubmed.ncbi.nlm.nih.gov/31233893/",
+  },
+  {
+    id: "mobile-posture-validation",
+    title: "Validity of a mobile posture application compared with VICON 3D analysis",
+    publisher: "Journal of Medical Internet Research; indexed by PubMed",
+    publishedOrUpdated: "2019; validation study",
+    evidenceType: "biomechanics-study",
+    url: "https://pubmed.ncbi.nlm.nih.gov/31000345/",
+  },
+  {
     id: "osha-evaluation",
     title: "eTools: Computer Workstations - Evaluation Checklist",
     publisher: "U.S. Occupational Safety and Health Administration",
@@ -232,6 +264,30 @@ export const POSTURE_EVIDENCE = [
     limitations:
       "A camera cannot measure comfort, symptoms, joint range, fatigue, or whether a posture is clinically normal.",
     sourceIds: ["osha-workstation", "osha-positions"],
+  },
+  {
+    id: "standing-alignment",
+    title: "Relaxed standing alignment is a flexible reference",
+    category: "general",
+    evidenceLevel: "guideline",
+    signal:
+      "In the selected full-body view, the head, trunk, and shoulder/hip lines stay close to the user's settled standing baseline.",
+    claim:
+      "Standing guidance describes a comfortable, non-rigid alignment with the head and trunk broadly stacked, while acknowledging that posture varies and should change. This app reports visible relationships only; it does not establish a normal range or diagnose a condition.",
+    actions: [
+      "Settle into a comfortable stance without pulling the shoulders back or holding the breath.",
+      "Use one gentle cue, then move and vary position instead of chasing perfect symmetry.",
+    ],
+    limitations:
+      "A single RGB camera cannot measure pain, balance confidence, foot pressure, spinal structure, true 3D alignment, or the cause of symptoms.",
+    sourceIds: [
+      "healthdirect-posture",
+      "nih-posture",
+      "osha-positions",
+      "niosh-risk-factors",
+      "posture-low-back-causality",
+      "mobile-posture-validation",
+    ],
   },
   {
     id: "static-posture",
@@ -524,6 +580,9 @@ export const POSTURE_EVIDENCE_BY_ID = Object.fromEntries(
 ) as unknown as Record<PostureEvidenceId, PostureEvidence>;
 
 export const ISSUE_EVIDENCE_IDS: Record<IssueCode, readonly PostureEvidenceId[]> = {
+  standing_head_alignment: ["standing-alignment", "forward-head"],
+  standing_trunk_alignment: ["standing-alignment", "posture-pain-boundary"],
+  standing_lateral_asymmetry: ["standing-alignment", "lateral-asymmetry"],
   head_forward: ["forward-head"],
   neck_inclination: ["neck-flexion"],
   shoulder_imbalance: ["lateral-asymmetry"],

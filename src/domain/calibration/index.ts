@@ -76,12 +76,19 @@ export class CalibrationWindow {
       return this.profile(null);
     }
     const movementMetric = calibrationMovementMetric(this.mode, observation);
-    if (this.mode !== "desk" && movementMetric === null) {
+    const isStationaryMode = this.mode === "desk" || this.mode === "standing";
+    if (!isStationaryMode && movementMetric === null) {
       this.samples = [];
       return this.profile(null);
     }
     const extraMetrics = calibrationExtraMetrics(this.mode, observation);
-    if (this.mode !== "desk" && extraMetrics === null) {
+    if (!isStationaryMode && extraMetrics === null) {
+      this.samples = [];
+      return this.profile(null);
+    }
+    const standingMetrics =
+      this.mode === "standing" ? standingCalibrationMetrics(observation) : null;
+    if (this.mode === "standing" && standingMetrics === null) {
       this.samples = [];
       return this.profile(null);
     }
@@ -93,6 +100,7 @@ export class CalibrationWindow {
       hipTilt: Math.abs(observation.landmarks.leftHip.y - observation.landmarks.rightHip.y),
       ...(movementMetric === null ? {} : { movementMetric }),
       ...(extraMetrics ?? {}),
+      ...(standingMetrics ?? {}),
     });
     if (this.samples.length > this.targetSamples) this.samples.shift();
     const stable = this.samples.length >= this.targetSamples && this.isStable();
@@ -127,6 +135,21 @@ export class CalibrationWindow {
     const max = Math.max(...torsos);
     if (max - min > Math.max(0.035, min * 0.16)) return false;
     if (this.mode === "desk") return true;
+    if (this.mode === "standing") {
+      const tolerances: Record<string, number> = {
+        standingHeadOffset: 0.1,
+        standingBodyLean: 0.06,
+        standingShoulderTilt: 0.1,
+        standingHipTilt: 0.1,
+      };
+      return Object.entries(tolerances).every(([key, tolerance]) => {
+        const values = this.samples.map((sample) => sample[key]);
+        if (values.some((value) => value === undefined)) return false;
+        const minValue = Math.min(...(values as number[]));
+        const maxValue = Math.max(...(values as number[]));
+        return maxValue - minValue <= tolerance;
+      });
+    }
     const metrics = this.samples.map((sample) => sample.movementMetric);
     if (metrics.some((value) => value === undefined)) return false;
     const minMetric = Math.min(...(metrics as number[]));
@@ -153,6 +176,36 @@ export class CalibrationWindow {
       ]),
     );
   }
+}
+
+function standingCalibrationMetrics(observation: FrameObservation): Record<string, number> | null {
+  const { landmarks } = observation;
+  const shoulders = midpoint(landmarks.leftShoulder, landmarks.rightShoulder);
+  const hips = midpoint(landmarks.leftHip, landmarks.rightHip);
+  const ankles = midpoint(landmarks.leftAnkle, landmarks.rightAnkle);
+  const ears = midpoint(landmarks.leftEar, landmarks.rightEar);
+  if (
+    !isFinitePoint(shoulders) ||
+    !isFinitePoint(hips) ||
+    !isFinitePoint(ankles) ||
+    !isFinitePoint(ears)
+  ) {
+    return null;
+  }
+  const torso = distance(shoulders, hips);
+  const bodyHeight = Math.max(
+    0.001,
+    Math.max(landmarks.leftAnkle.y, landmarks.rightAnkle.y) -
+      Math.min(landmarks.nose.y, landmarks.leftEar.y, landmarks.rightEar.y),
+  );
+  if (!Number.isFinite(torso) || torso < 1e-6 || !Number.isFinite(bodyHeight)) return null;
+  const metrics = {
+    standingHeadOffset: (ears.x - shoulders.x) / torso,
+    standingBodyLean: Math.abs(shoulders.x - ankles.x) / bodyHeight,
+    standingShoulderTilt: (landmarks.leftShoulder.y - landmarks.rightShoulder.y) / torso,
+    standingHipTilt: (landmarks.leftHip.y - landmarks.rightHip.y) / torso,
+  };
+  return Object.values(metrics).every(Number.isFinite) ? metrics : null;
 }
 
 function chooseAngle(

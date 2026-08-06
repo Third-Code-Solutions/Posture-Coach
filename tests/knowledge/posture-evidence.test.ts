@@ -38,6 +38,9 @@ describe("offline posture evidence cache", () => {
 
   it("maps every live evaluator issue to cached evidence", () => {
     const issueCodes: IssueCode[] = [
+      "standing_head_alignment",
+      "standing_trunk_alignment",
+      "standing_lateral_asymmetry",
       "head_forward",
       "neck_inclination",
       "shoulder_imbalance",

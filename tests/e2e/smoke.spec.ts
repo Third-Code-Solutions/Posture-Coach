@@ -22,7 +22,8 @@ test.describe("privacy-first posture coach smoke", () => {
       page.getByRole("heading", { name: /Posture practice, with signal/ }),
     ).toBeVisible();
     const practiceModes = page.getByRole("listbox", { name: "Practice mode" });
-    await expect(practiceModes.getByRole("option")).toHaveCount(6);
+    await expect(practiceModes.getByRole("option")).toHaveCount(7);
+    await expect(page.getByText(/Standing posture \/ Local worker ready on demand/)).toBeVisible();
     await practiceModes.getByRole("option", { name: "Plank" }).click();
     await expect(page.getByRole("heading", { name: "Posture studio" })).toBeVisible();
     await expect(page.getByText(/Plank \/ Local worker ready on demand/)).toBeVisible();

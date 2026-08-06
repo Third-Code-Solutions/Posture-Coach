@@ -235,6 +235,133 @@ describe("geometry and deterministic coaching", () => {
     expect(result.feedback.tone).toBe("positive");
   });
 
+  it("calibrates a relaxed full-body standing baseline and recognizes steady alignment", () => {
+    const window = new CalibrationWindow("standing", "side", false, 4);
+    let profile = window.add(
+      makeObservation({ cameraView: "side", observedView: "side", timestampMs: 0 }),
+    );
+    for (let index = 1; index < 4; index += 1) {
+      profile = window.add(
+        makeObservation({
+          cameraView: "side",
+          observedView: "side",
+          timestampMs: index * 40,
+          sequence: index,
+        }),
+      );
+    }
+    expect(profile.stable).toBe(true);
+    expect(profile.baseline.standingHeadOffset).toBeDefined();
+    expect(profile.baseline.standingBodyLean).toBeDefined();
+
+    const engine = createEngine();
+    engine.setMode("standing");
+    engine.setCalibrationProfile(profile);
+    const result = engine.process(
+      makeObservation({ cameraView: "side", observedView: "side", timestampMs: 1_000 }),
+    );
+    expect(result.status).toBe("valid");
+    expect(result.issues).toHaveLength(0);
+    expect(result.feedback.title).toBe("Standing alignment looks steady");
+  });
+
+  it("teaches a persistent side-view head and trunk alignment drift", () => {
+    const engine = createEngine();
+    engine.setMode("standing");
+    engine.setCalibrationProfile({
+      mode: "standing",
+      cameraView: "side",
+      observedView: "side",
+      viewConfidence: 1,
+      mirroredPreview: false,
+      stable: true,
+      sampleCount: 4,
+      completedAtMs: 100,
+      baseline: {
+        torso: 0.21,
+        standingHeadOffset: 0.05,
+        standingBodyLean: 0,
+        standingShoulderTilt: 0,
+        standingHipTilt: 0,
+      },
+    });
+    const drift = makeLandmarks({
+      leftEar: { x: 0.72 },
+      rightEar: { x: 0.72 },
+      leftShoulder: { x: 0.56 },
+      rightShoulder: { x: 0.7 },
+    });
+    const first = engine.process(
+      makeObservation({
+        landmarks: drift,
+        cameraView: "side",
+        observedView: "side",
+        timestampMs: 0,
+      }),
+    );
+    const second = engine.process(
+      makeObservation({
+        landmarks: drift,
+        cameraView: "side",
+        observedView: "side",
+        timestampMs: 700,
+        sequence: 1,
+      }),
+    );
+    expect(first.feedback.title).not.toBe("Head alignment drift");
+    expect(second.issues.map((item) => item.code)).toEqual(
+      expect.arrayContaining(["standing_head_alignment", "standing_trunk_alignment"]),
+    );
+    expect(second.feedback.title).toBe("Head alignment drift");
+  });
+
+  it("teaches a persistent front-view side-to-side difference without diagnosing it", () => {
+    const engine = createEngine();
+    engine.setMode("standing");
+    engine.setCalibrationProfile({
+      mode: "standing",
+      cameraView: "front",
+      observedView: "front",
+      viewConfidence: 1,
+      mirroredPreview: false,
+      stable: true,
+      sampleCount: 4,
+      completedAtMs: 100,
+      baseline: {
+        torso: 0.21,
+        standingHeadOffset: 0,
+        standingBodyLean: 0,
+        standingShoulderTilt: 0,
+        standingHipTilt: 0,
+      },
+    });
+    const uneven = makeLandmarks({
+      leftShoulder: { y: 0.52 },
+      rightShoulder: { y: 0.43 },
+    });
+    engine.process(
+      makeObservation({
+        landmarks: uneven,
+        cameraView: "front",
+        observedView: "front",
+        timestampMs: 0,
+      }),
+    );
+    const result = engine.process(
+      makeObservation({
+        landmarks: uneven,
+        cameraView: "front",
+        observedView: "front",
+        timestampMs: 700,
+        sequence: 1,
+      }),
+    );
+    expect(result.issues).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: "standing_lateral_asymmetry" })]),
+    );
+    expect(result.feedback.body).toContain("Level the camera");
+  });
+
   it("uses the calibration baseline to detect a material framing change", () => {
     const engine = createEngine();
     engine.setCalibrationProfile({
