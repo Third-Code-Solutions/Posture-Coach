@@ -1008,7 +1008,10 @@ label:has(input:focus-visible) {
   .preview-wrap {
     width: min(100%, calc(80svh * 9 / 16));
     height: min(80svh, calc((100vw - 1rem) * 16 / 9));
+    min-height: 0;
+    max-height: 80svh;
     margin-inline: auto;
+    aspect-ratio: 9 / 16;
   }
 }
 
