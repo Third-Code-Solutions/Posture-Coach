@@ -1,4 +1,5 @@
 import type { PoseWorkerRequest, PoseWorkerResponse } from "./protocol";
+import { probeWebglCapabilities } from "./delegate";
 
 export interface PoseWorkerClientOptions {
   onMessage: (message: PoseWorkerResponse) => void;
@@ -36,7 +37,7 @@ export class PoseWorkerClient {
   }
 
   init(): void {
-    this.post({ type: "init" });
+    this.post({ type: "init", ...probeWebglCapabilities() });
   }
 
   submit(frame: ImageBitmap, timestampMs: number, sequence: number): boolean {

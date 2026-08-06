@@ -1,6 +1,9 @@
 import { FilesetResolver, PoseLandmarker } from "@mediapipe/tasks-vision";
 import type { PoseLandmarkerResult } from "@mediapipe/tasks-vision";
+import type { Pose } from "@tensorflow-models/pose-detection/dist/types";
+import type { PoseDetector } from "@tensorflow-models/pose-detection/dist/pose_detector";
 import type { PoseWorkerRequest, PoseWorkerResponse } from "./protocol";
+import { selectPoseDelegate, type PoseDelegate } from "./delegate";
 
 const nativeFetch = globalThis.fetch.bind(globalThis);
 const LOCAL_WORKER_RUNTIME_REVISION = "2026-08-06-portrait-realtime";
@@ -19,9 +22,12 @@ globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) =>
     : nativeFetch(input, init)) as typeof fetch;
 
 let landmarker: PoseLandmarker | null = null;
+let cpuDetector: PoseDetector | null = null;
 let landmarkerPromise: Promise<void> | null = null;
 let disposed = false;
 let activeDelegate: "GPU" | "CPU" = "CPU";
+let selectedDelegate: PoseDelegate = "CPU";
+let activeModel: "pose_landmarker_full" | "blazepose_tfjs_full" = "pose_landmarker_full";
 
 const workerScope = self as unknown as {
   onmessage: ((event: MessageEvent<PoseWorkerRequest>) => void) | null;
@@ -29,9 +35,21 @@ const workerScope = self as unknown as {
 };
 
 async function createLandmarker(): Promise<void> {
-  if (landmarker || disposed) return;
+  if (landmarker || cpuDetector || disposed) return;
   if (!landmarkerPromise) {
     landmarkerPromise = (async () => {
+      if (selectedDelegate === "CPU") {
+        const created = await createCpuDetector();
+        if (disposed) {
+          created.dispose();
+          return;
+        }
+        cpuDetector = created;
+        activeDelegate = "CPU";
+        activeModel = "blazepose_tfjs_full";
+        return;
+      }
+
       const vision = await FilesetResolver.forVisionTasks("/wasm");
       const options = {
         runningMode: "VIDEO" as const,
@@ -51,15 +69,20 @@ async function createLandmarker(): Promise<void> {
           },
         });
         activeDelegate = "GPU";
+        activeModel = "pose_landmarker_full";
       } catch {
-        created = await PoseLandmarker.createFromOptions(vision, {
-          ...options,
-          baseOptions: {
-            modelAssetPath: "/models/pose_landmarker_full.task",
-            delegate: "CPU",
-          },
-        });
+        // A context can disappear between the page probe and graph startup.
+        // MediaPipe's CPU delegate still uploads frames through WebGL, so use
+        // the independent local WASM runtime for a real no-WebGL fallback.
+        const fallback = await createCpuDetector();
+        if (disposed) {
+          fallback.dispose();
+          return;
+        }
+        cpuDetector = fallback;
         activeDelegate = "CPU";
+        activeModel = "blazepose_tfjs_full";
+        return;
       }
       if (disposed) {
         created.close();
@@ -71,6 +94,28 @@ async function createLandmarker(): Promise<void> {
     });
   }
   await landmarkerPromise;
+}
+
+async function createCpuDetector(): Promise<PoseDetector> {
+  const [tf, wasm, detectorModule] = await Promise.all([
+    import("@tensorflow/tfjs-core"),
+    import("@tensorflow/tfjs-backend-wasm"),
+    import("@tensorflow-models/pose-detection/dist/blazepose_tfjs/detector"),
+  ]);
+  wasm.setWasmPaths(new URL("/tfjs-wasm/", self.location.origin).href);
+  if (!(await tf.setBackend("wasm"))) {
+    throw new Error("The local WASM pose runtime could not start.");
+  }
+  await tf.ready();
+  return detectorModule.load({
+    runtime: "tfjs",
+    modelType: "full",
+    enableSmoothing: true,
+    enableSegmentation: false,
+    smoothSegmentation: true,
+    detectorModelUrl: "/models/blazepose-tfjs/detector/model.json",
+    landmarkModelUrl: "/models/blazepose-tfjs/landmark-full/model.json",
+  });
 }
 
 function emitResult(result: PoseLandmarkerResult, timestampMs: number, sequence: number): void {
@@ -95,12 +140,52 @@ function emitResult(result: PoseLandmarkerResult, timestampMs: number, sequence:
   });
 }
 
+function toCpuLandmark(
+  point: Pose["keypoints"][number],
+  width: number,
+  height: number,
+  poseScore: number,
+  world: boolean,
+) {
+  const visibility = point.score ?? poseScore;
+  return {
+    x: world ? point.x : point.x / width,
+    y: world ? point.y : point.y / height,
+    z: world ? (point.z ?? 0) : (point.z ?? 0) / width,
+    visibility,
+    presence: visibility,
+  };
+}
+
+function emitCpuResult(
+  pose: Pose | undefined,
+  width: number,
+  height: number,
+  timestampMs: number,
+  sequence: number,
+): void {
+  const poseScore = pose?.score ?? 0;
+  workerScope.postMessage({
+    type: "result",
+    landmarks: pose
+      ? pose.keypoints.map((point) => toCpuLandmark(point, width, height, poseScore, false))
+      : [],
+    worldLandmarks: pose?.keypoints3D
+      ? pose.keypoints3D.map((point) => toCpuLandmark(point, width, height, poseScore, true))
+      : [],
+    timestampMs,
+    sequence,
+  });
+}
+
 workerScope.onmessage = async (event) => {
   const request = event.data;
   if (request.type === "dispose") {
     disposed = true;
     landmarker?.close();
+    cpuDetector?.dispose();
     landmarker = null;
+    cpuDetector = null;
     return;
   }
   if (disposed) {
@@ -114,11 +199,15 @@ workerScope.onmessage = async (event) => {
   }
   if (request.type === "init") {
     try {
+      selectedDelegate = selectPoseDelegate(request.webgl2Available, request.webglAvailable);
       await createLandmarker();
       workerScope.postMessage({
         type: "ready",
-        model: "pose_landmarker_full",
-        version: `@mediapipe/tasks-vision@1.0.1 (${activeDelegate}; ${LOCAL_WORKER_RUNTIME_REVISION})`,
+        model: activeModel,
+        version:
+          activeModel === "blazepose_tfjs_full"
+            ? `BlazePose Full / TFJS WASM (${activeDelegate}; ${LOCAL_WORKER_RUNTIME_REVISION})`
+            : `@mediapipe/tasks-vision@1.0.1 (${activeDelegate}; ${LOCAL_WORKER_RUNTIME_REVISION})`,
       });
     } catch (error) {
       workerScope.postMessage({
@@ -132,11 +221,22 @@ workerScope.onmessage = async (event) => {
   }
   try {
     await createLandmarker();
-    if (!landmarker) throw new Error("Pose landmarker is unavailable.");
-    const result = landmarker.detectForVideo(request.frame, request.timestampMs);
+    const width = request.frame.width;
+    const height = request.frame.height;
+    if (cpuDetector) {
+      const poses = await cpuDetector.estimatePoses(
+        request.frame,
+        { maxPoses: 1, flipHorizontal: false },
+        request.timestampMs,
+      );
+      emitCpuResult(poses[0], width, height, request.timestampMs, request.sequence);
+    } else {
+      if (!landmarker) throw new Error("Pose landmarker is unavailable.");
+      const result = landmarker.detectForVideo(request.frame, request.timestampMs);
+      emitResult(result, request.timestampMs, request.sequence);
+      result.close();
+    }
     request.frame.close();
-    emitResult(result, request.timestampMs, request.sequence);
-    result.close();
   } catch (error) {
     request.frame.close();
     workerScope.postMessage({

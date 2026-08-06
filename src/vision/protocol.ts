@@ -7,12 +7,16 @@ export interface RawPoseLandmark {
 }
 
 export type PoseWorkerRequest =
-  | { type: "init" }
+  | { type: "init"; webgl2Available: boolean; webglAvailable: boolean }
   | { type: "infer"; frame: ImageBitmap; timestampMs: number; sequence: number }
   | { type: "dispose" };
 
 export type PoseWorkerResponse =
-  | { type: "ready"; model: "pose_landmarker_full"; version: string }
+  | {
+      type: "ready";
+      model: "pose_landmarker_full" | "blazepose_tfjs_full";
+      version: string;
+    }
   | {
       type: "result";
       landmarks: RawPoseLandmark[];

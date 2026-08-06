@@ -6,7 +6,13 @@
 camera / local video / still image
         |
         v
-video or image element -> ImageBitmap -> PoseWorkerClient -> dedicated MediaPipe worker
+video or image element -> ImageBitmap -> PoseWorkerClient -> dedicated vision worker
+                                                       |
+                              WebGL available? --------+-------- no WebGL
+                                   |                              |
+                                   v                              v
+                         MediaPipe Pose Landmarker       BlazePose TFJS / WASM CPU
+                                   \___________________________/
                                                        |
                                                        v
                        raw landmarks -> normalization -> confidence gate
@@ -30,6 +36,8 @@ The current browser surface shows one cue at a time, keeps camera activation beh
 
 The worker also short-circuits the optional ODML telemetry request bundled by the MediaPipe runtime. The model and Wasm load from the app origin; runtime network validation showed only same-origin assets and the local upload object URL.
 
+When the page cannot create either WebGL 2 or WebGL 1, the worker does not start MediaPipe's WebGL-backed image upload path. It loads the vendored BlazePose Full TFJS model and WASM binaries from same-origin assets instead, preserving the 33-keypoint contract while trading throughput for compatibility. GPU-capable devices keep the MediaPipe path.
+
 Uploaded-video `ended` events stop the frame loop, dispose the worker, and retain only aggregate in-memory session summary data for the completed view. Still images run one inference, retain only their overlay state, and do not fabricate movement or repetition results. Refresh or stop clears the media source and object URL.
 
 ## MediaPipe asset policy
@@ -38,6 +46,7 @@ Uploaded-video `ended` events stop the frame loop, dispose the worker, and retai
 - Model: official Pose Landmarker Full float16 bundle, same-origin at `/models/pose_landmarker_full.task`.
 - Wasm: copied from the exact installed package into `/wasm`; runtime code uses `/wasm`, never `@latest` or a third-party CDN.
 - Segmentation masks are disabled for the MVP to keep inference work bounded.
+- No-WebGL fallback: `@tensorflow-models/pose-detection@2.1.3` BlazePose TFJS Full with TensorFlow.js WASM `4.22.0`, all vendored under `public/models/blazepose-tfjs` and `public/tfjs-wasm`.
 
 ## Known validation limits
 

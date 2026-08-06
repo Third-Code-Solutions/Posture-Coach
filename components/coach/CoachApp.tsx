@@ -308,7 +308,9 @@ export function CoachApp() {
   const handleWorkerMessage = (message: PoseWorkerResponse) => {
     if (message.type === "ready") {
       const delegate = message.version.match(/\b(GPU|CPU)\b/)?.[1];
-      setWorkerLabel(`Pose Landmarker Full${delegate ? ` · ${delegate}` : ""} · local`);
+      const model =
+        message.model === "blazepose_tfjs_full" ? "BlazePose Full" : "Pose Landmarker Full";
+      setWorkerLabel(`${model}${delegate ? ` · ${delegate}` : ""} · local`);
       return;
     }
     if (message.type === "error") {
