@@ -233,6 +233,12 @@ export function CoachApp() {
   const calibrationRef = useRef<CalibrationWindow | null>(null);
   const animationRef = useRef<number | null>(null);
   const videoFrameCallbackRef = useRef<number | null>(null);
+  const frameCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const directBitmapSupportRef = useRef<{ video: boolean | null; image: boolean | null }>({
+    video: null,
+    image: null,
+  });
+  const frameCaptureFailureRef = useRef(false);
   const lastVideoTimeRef = useRef(-1);
   const lastSubmittedTimestampRef = useRef(-1);
   const sequenceRef = useRef(0);
@@ -415,10 +421,49 @@ export function CoachApp() {
     lastVideoTimeRef.current = -1;
     lastSubmittedTimestampRef.current = -1;
     frameCaptureInFlightRef.current = false;
+    frameCaptureFailureRef.current = false;
     visualSmootherRef.current.reset();
     setTrackingLatencyMs(null);
     if (processingRef.current) ensureWorker();
   }
+
+  const captureBitmap = async (
+    source: HTMLVideoElement | HTMLImageElement,
+    width: number,
+    height: number,
+    kind: "video" | "image",
+  ): Promise<ImageBitmap> => {
+    if (typeof createImageBitmap === "function" && directBitmapSupportRef.current[kind] !== false) {
+      try {
+        const frame = await createImageBitmap(source);
+        directBitmapSupportRef.current[kind] = true;
+        return frame;
+      } catch {
+        // Safari and some embedded browsers expose createImageBitmap but do
+        // not accept a live HTML video element. Use a canvas copy below.
+        directBitmapSupportRef.current[kind] = false;
+      }
+    }
+    if (typeof createImageBitmap !== "function") {
+      throw new Error("ImageBitmap capture is unavailable in this browser.");
+    }
+    if (width <= 0 || height <= 0) {
+      throw new Error("The browser did not provide a usable video frame size.");
+    }
+    let canvas = frameCanvasRef.current;
+    if (!canvas) {
+      canvas = document.createElement("canvas");
+      frameCanvasRef.current = canvas;
+    }
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    }
+    const context = canvas.getContext("2d", { alpha: false });
+    if (!context) throw new Error("The browser could not create a camera frame canvas.");
+    context.drawImage(source, 0, 0, width, height);
+    return createImageBitmap(canvas);
+  };
 
   const processFrame = async (mediaTime?: number) => {
     const video = videoRef.current;
@@ -431,7 +476,7 @@ export function CoachApp() {
     if (currentTime <= lastVideoTimeRef.current) return;
     frameCaptureInFlightRef.current = true;
     try {
-      const frame = await createImageBitmap(video);
+      const frame = await captureBitmap(video, video.videoWidth, video.videoHeight, "video");
       if (
         !processingRef.current ||
         workerRef.current !== worker ||
@@ -446,6 +491,18 @@ export function CoachApp() {
       worker.submit(frame, timestampMs, sequenceRef.current++);
     } catch {
       // A frame may disappear during source changes. Cleanup owns the error state.
+      if (
+        processingRef.current &&
+        sourceEpoch === sourceEpochRef.current &&
+        !frameCaptureFailureRef.current
+      ) {
+        frameCaptureFailureRef.current = true;
+        cleanupSession(false);
+        setSourceState("error");
+        setError(
+          "This browser could not capture a live frame for local tracking. Update the browser or choose a local video file.",
+        );
+      }
     } finally {
       if (sourceEpoch === sourceEpochRef.current && workerRef.current === worker) {
         frameCaptureInFlightRef.current = false;
@@ -563,7 +620,7 @@ export function CoachApp() {
       setImageStatus("loading");
       setSessionSummary(null);
       const worker = ensureWorker();
-      const frame = await createImageBitmap(image);
+      const frame = await captureBitmap(image, image.naturalWidth, image.naturalHeight, "image");
       if (!isCurrentImageSource(image, token) || workerRef.current !== worker) {
         frame.close();
         return;
@@ -900,6 +957,7 @@ export function CoachApp() {
     lastVideoTimeRef.current = -1;
     lastSubmittedTimestampRef.current = -1;
     frameCaptureInFlightRef.current = false;
+    frameCaptureFailureRef.current = false;
     sequenceRef.current = 0;
     visualSmootherRef.current.reset();
     setTrackingLatencyMs(null);
@@ -1033,6 +1091,13 @@ export function CoachApp() {
                 className={`preview-image ${imageVisible ? "is-visible" : ""} ${mirrored ? "is-mirrored" : ""}`}
                 alt="Uploaded local posture image"
               />
+              {previewVisible && sourceKind !== "image" && (
+                <div className="full-body-guide" aria-hidden="true">
+                  <span className="full-body-guide-label">HEAD + FEET IN FRAME</span>
+                  <span className="full-body-guide-head" />
+                  <span className="full-body-guide-feet" />
+                </div>
+              )}
               <PoseCanvas
                 landmarks={landmarks}
                 mirrored={mirrored}
