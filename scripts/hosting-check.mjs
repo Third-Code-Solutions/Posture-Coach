@@ -62,7 +62,7 @@ try {
 
   const rootResponse = await expectStatus("/", 200);
   const rootBody = await rootResponse.text();
-  if (!rootBody.includes("Form / Local")) {
+  if (!rootBody.includes("Third Code Posture")) {
     throw new Error("Root response does not contain the application title");
   }
   for (const header of [

@@ -1,6 +1,6 @@
 # Deployment readiness
 
-Form / Local is a browser-local static export. The deployed site runs the same client bundle as the local production export; it does not need a runtime API.
+Third Code Posture is a browser-local static export. The deployed site runs the same client bundle as the local production export; it does not need a runtime API.
 
 ## Vercel frontend
 

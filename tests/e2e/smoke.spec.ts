@@ -17,13 +17,15 @@ test.describe("privacy-first posture coach smoke", () => {
   test("renders all modes and explicit positioning guidance", async ({ page }) => {
     await page.goto("/");
 
-    await expect(page).toHaveTitle(/Form \/ Local/);
-    await expect(page.getByRole("heading", { name: /A steadier way/ })).toBeVisible();
+    await expect(page).toHaveTitle(/Third Code Posture/);
+    await expect(
+      page.getByRole("heading", { name: /Posture practice, with signal/ }),
+    ).toBeVisible();
     const practiceModes = page.getByRole("listbox", { name: "Practice mode" });
     await expect(practiceModes.getByRole("option")).toHaveCount(6);
     await practiceModes.getByRole("option", { name: "Plank" }).click();
-    await expect(page.getByRole("heading", { name: "Your practice space" })).toBeVisible();
-    await expect(page.getByText(/Plank · Local worker ready on demand/)).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Posture studio" })).toBeVisible();
+    await expect(page.getByText(/Plank \/ Local worker ready on demand/)).toBeVisible();
     await expect(page.getByText(/Side profile: place the camera/)).toBeVisible();
   });
 

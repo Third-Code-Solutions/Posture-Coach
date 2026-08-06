@@ -1016,37 +1016,42 @@ export function CoachApp() {
 
   return (
     <main className="page-shell">
+      <a className="skip-link" href="#workspace-title">
+        Skip to posture studio
+      </a>
       <header className="topbar">
         <div className="wordmark">
           <span className="wordmark-mark" aria-hidden="true">
-            /
+            TC
           </span>
-          <span>form / local</span>
+          <span className="wordmark-name">
+            Third Code <span>Posture</span>
+          </span>
         </div>
         <div className="privacy-pill">
           {iconShield}
-          <span>Local only</span>
+          <span>Local inference</span>
           <span className="privacy-dot" aria-hidden="true" />
         </div>
       </header>
 
       <section className="hero-grid" aria-labelledby="page-title">
         <div className="hero-copy">
-          <span className="eyebrow">Live alignment lab</span>
+          <span className="eyebrow">Third Code / posture lab</span>
           <h1 id="page-title">
-            A steadier way to move through your <em>day.</em>
+            Posture practice, with <em>signal.</em>
           </h1>
           <p className="hero-lede">
-            A quiet, browser-local coach for desk posture and movement practice. Clear cues, visible
-            evidence, no account, no cloud upload.
+            Third Code Posture is a quiet, browser-local coach for desk posture and movement
+            practice. Clear cues, visible evidence, no account, no cloud upload.
           </p>
           <div className="trust-row" aria-label="Product guarantees">
             <span className="trust-note">{iconShield} No frames leave this tab</span>
-            <span className="trust-note">◆ No diagnosis</span>
-            <span className="trust-note">⌁ No paid AI</span>
+            <span className="trust-note">No diagnosis</span>
+            <span className="trust-note">No paid API</span>
           </div>
           <div className="steps-panel" aria-label="How it works">
-            <span className="steps-title">A simple loop</span>
+            <span className="steps-title">Three quiet steps</span>
             <span className="step-row">
               <span className="step-number">01</span>Choose a camera, video, or image
             </span>
@@ -1062,9 +1067,9 @@ export function CoachApp() {
         <section className="workspace-card" aria-labelledby="workspace-title">
           <div className="workspace-header">
             <div>
-              <h2 id="workspace-title">Your practice space</h2>
+              <h2 id="workspace-title">Posture studio</h2>
               <p>
-                {MODE_LABELS[mode]} · {workerLabel}
+                {MODE_LABELS[mode]} / {workerLabel}
               </p>
             </div>
             <span
@@ -1107,7 +1112,7 @@ export function CoachApp() {
               {!previewVisible && (
                 <div className="preview-empty">
                   <div className="preview-empty-content">
-                    <strong>Start when you’re ready.</strong>
+                    <strong>Start when you&apos;re ready.</strong>
                     <span>
                       Center one person in frame, keep your full body visible, and use even light.
                       Keep the camera upright and step back until your head and feet stay inside the
@@ -1311,9 +1316,9 @@ export function CoachApp() {
 
       <footer className="footer-note">
         <p>
-          <strong>Educational coaching only.</strong> This tool does not diagnose conditions or
-          promise clinical accuracy. Stop if you feel pain and seek qualified professional help for
-          injury or rehabilitation.
+          <strong>Third Code Posture / Educational coaching only.</strong> This tool does not
+          diagnose conditions or promise clinical accuracy. Stop if you feel pain and seek qualified
+          professional help for injury or rehabilitation.
         </p>
         <p>Frames, landmarks, and summaries stay in memory and reset when you refresh.</p>
       </footer>

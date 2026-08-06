@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "../styles/globals.css";
 
 export const metadata: Metadata = {
-  title: "Form / Local — Privacy-first posture coaching",
-  description: "A browser-local posture coach for desk alignment and movement practice.",
+  title: "Third Code Posture — Local posture coaching",
+  description: "A privacy-first posture coach that runs in your browser.",
   icons: {
     icon: "/icon.svg",
   },

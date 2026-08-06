@@ -1,4 +1,4 @@
-# Form / Local
+# Third Code Posture
 
 Privacy-first browser-local posture coaching for desk alignment and movement practice.
 

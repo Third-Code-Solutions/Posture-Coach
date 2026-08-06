@@ -60,6 +60,7 @@ export function ModeSelector({
           </button>
         ))}
       </div>
+      <p className="mode-description">{MODE_DESCRIPTIONS[mode]}</p>
     </div>
   );
 }
