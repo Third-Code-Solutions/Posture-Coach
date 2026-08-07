@@ -110,7 +110,7 @@ test.describe("privacy-first posture coach smoke", () => {
     await expect(page.getByText(/tracking confidence means landmarks are visible/i)).toBeVisible();
     const measurementRegister = page.locator(".measurement-register");
     const measurementRegisterLabel = measurementRegister.getByText(
-      "28 auditable measurement rules",
+      "29 auditable measurement rules",
       { exact: true },
     );
     await expect(measurementRegisterLabel).toBeVisible();
@@ -121,7 +121,7 @@ test.describe("privacy-first posture coach smoke", () => {
         name: /Every measurable gate, correction, and rep decision has a named metric, view, threshold, rationale, and history/i,
       }),
     ).toBeVisible();
-    await expect(measurementRegister.locator(".measurement-rule-card")).toHaveCount(28);
+    await expect(measurementRegister.locator(".measurement-rule-card")).toHaveCount(29);
     await expect(
       measurementRegister.getByText("Squat selected range", { exact: true }),
     ).toBeVisible();

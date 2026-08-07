@@ -1,3 +1,5 @@
+import { MEASUREMENT_THRESHOLDS } from "../domain/measurement-registry";
+
 export interface CaptureViewport {
   width: number;
   height: number;
@@ -6,7 +8,7 @@ export interface CaptureViewport {
 export type CameraFacingMode = "user" | "environment";
 
 export const PORTRAIT_CAMERA_ASPECT_RATIO = 9 / 16;
-export const MAX_INFERENCE_FRAME_DIMENSION = 720;
+export const MAX_INFERENCE_FRAME_DIMENSION = MEASUREMENT_THRESHOLDS.inference.detailFrameDimension;
 
 export interface FrameDimensions {
   width: number;
@@ -77,7 +79,7 @@ export function isPortraitFrame(width: number, height: number): boolean {
 export function getInferenceFrameDimensions(
   width: number,
   height: number,
-  maxDimension = MAX_INFERENCE_FRAME_DIMENSION,
+  maxDimension: number = MAX_INFERENCE_FRAME_DIMENSION,
 ): FrameDimensions {
   if (
     !Number.isFinite(width) ||

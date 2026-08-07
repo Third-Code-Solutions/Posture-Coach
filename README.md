@@ -47,7 +47,7 @@ In a second terminal, confirm `http://127.0.0.1:3001/healthz` returns `ok`, then
 - Camera frames, uploaded video, uploaded images, landmarks, and session summaries remain in browser memory. There is no account, backend, analytics, paid AI API, or frame upload.
 - Still images run one local pose pass and show the landmark overlay. Movement coaching and repetition counts require a webcam or video sequence.
 - Evaluation abstains when required landmarks are missing, confidence is low, the view is unsupported, or calibration is not stable.
-- Inference frames are capped at 720px on the longest edge to reduce transfer and CPU/GPU pressure on phones; displayed preview keeps full source framing.
+- Live inference starts at a 720px longest-edge input budget, then can step to 576px or 480px only after sustained capture-to-result latency. Hysteresis restores detail after a long fast run and worker restarts clear incomplete streaks. Full pose model, uncropped preview, confidence gates, and camera-local processing stay unchanged.
 - Front camera mirrors preview by default; rear camera stays unmirrored and usually offers wider full-body framing. Canonical anatomical left/right labels never change.
 - Guided camera setup waits five seconds before accepting baseline samples, giving the person time to leave the controls and stand naturally. A generated local tone accompanies the visible countdown when browser audio is available.
 - Live video requests an optional screen wake lock so phones do not dim during hands-free practice. Unsupported or battery-blocked devices continue normally and show a manual sleep-setting fallback.

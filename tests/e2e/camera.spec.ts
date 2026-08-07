@@ -1,3 +1,4 @@
+import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 
 function captureBrowserFaults(page: Page) {
@@ -61,6 +62,7 @@ test("analyzes a fake webcam stream locally", async ({ page, browserName }, test
   );
   await expect(page.getByText(/Calibrating \d+\/12/)).toHaveCount(0);
   await expect(page.getByText(/Pose Landmarker Full.*local/i)).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(/\d+ms live.*Detail 720px/i)).toBeVisible({ timeout: 15_000 });
   await page.locator(".device-readiness summary").click();
   await expect(page.getByText(/Screen wake lock active/i)).toBeVisible();
   await page.evaluate(async () => {
@@ -141,6 +143,77 @@ test("analyzes a fake webcam stream locally", async ({ page, browserName }, test
       }),
     )
     .toBe(true);
+  expect(faults.pageErrors).toEqual([]);
+  expect(faults.consoleErrors).toEqual([]);
+});
+
+test("keeps bounded canvas inference and adapts after sustained latency", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "Dedicated desktop Chrome fallback probe.");
+  await page.addInitScript(() => {
+    const originalCreateImageBitmap = window.createImageBitmap.bind(window);
+    Object.defineProperty(window, "__resizeOptionFailures", { value: 0, writable: true });
+    Object.defineProperty(window, "__slowCanvasBitmaps", { value: false, writable: true });
+    Object.defineProperty(window, "createImageBitmap", {
+      configurable: true,
+      value: async (source: ImageBitmapSource, options?: ImageBitmapOptions) => {
+        const testWindow = window as typeof window & {
+          __resizeOptionFailures: number;
+          __slowCanvasBitmaps: boolean;
+        };
+        if (options?.resizeWidth || options?.resizeHeight) {
+          testWindow.__resizeOptionFailures += 1;
+          throw new TypeError("Resize options unavailable in this probe.");
+        }
+        if (source instanceof HTMLCanvasElement && testWindow.__slowCanvasBitmaps) {
+          await new Promise((resolve) => window.setTimeout(resolve, 420));
+        }
+        return originalCreateImageBitmap(source);
+      },
+    });
+  });
+  const faults = captureBrowserFaults(page);
+  await page.goto("/");
+  await page.getByLabel("Camera view").selectOption("front");
+  await page.evaluate(() => {
+    (
+      window as typeof window & {
+        __slowCanvasBitmaps: boolean;
+      }
+    ).__slowCanvasBitmaps = true;
+  });
+  await page
+    .locator('input[type="file"]')
+    .setInputFiles(path.resolve("output/playwright/fixtures/pose-20s.mp4"));
+  await expect(page.getByText(/Pose Landmarker Full.*local/i)).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(page.getByText(/\d+ms live.*Balanced 576px/i)).toBeVisible({ timeout: 30_000 });
+  await page.locator(".device-readiness summary").click();
+  await expect(page.getByText(/Balanced profile.*current 576×576/i)).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as typeof window & { __resizeOptionFailures?: number }).__resizeOptionFailures ??
+          0,
+      ),
+    )
+    .toBeGreaterThan(0);
+  const overlayPixels = await page.locator("canvas.preview-canvas").evaluate((canvas) => {
+    const canvasElement = canvas as HTMLCanvasElement;
+    const context = canvasElement.getContext("2d");
+    if (!context) return 0;
+    const pixels = context.getImageData(0, 0, canvasElement.width, canvasElement.height).data;
+    let count = 0;
+    for (let index = 3; index < pixels.length; index += 4) {
+      if (pixels[index] > 0) count += 1;
+    }
+    return count;
+  });
+  expect(overlayPixels).toBeGreaterThan(0);
+  await page.getByRole("button", { name: "Stop session" }).click();
   expect(faults.pageErrors).toEqual([]);
   expect(faults.consoleErrors).toEqual([]);
 });

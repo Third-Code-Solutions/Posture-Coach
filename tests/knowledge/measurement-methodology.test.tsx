@@ -4,6 +4,16 @@ import { FeedbackCard } from "../../components/feedback/FeedbackCard";
 import { IssueMeasurementDetails } from "../../components/knowledge/MeasurementMethodology";
 
 describe("live measurement traceability", () => {
+  it("labels adaptive inference as a sample window instead of an immediate rule", () => {
+    const html = renderToStaticMarkup(
+      <IssueMeasurementDetails measurementRuleIds={["capture-adaptive-inference"]} />,
+    );
+
+    expect(html).toContain("Adaptive local inference budget");
+    expect(html).toContain("sample-window hysteresis");
+    expect(html).not.toContain("Operational gate Â· immediate");
+  });
+
   it("renders only the exact rule carried by a live cue", () => {
     const html = renderToStaticMarkup(
       <IssueMeasurementDetails measurementRuleIds={["lunge-split-stance"]} />,

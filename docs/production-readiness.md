@@ -1,6 +1,6 @@
 # Production readiness
 
-Updated 2026-08-07 for the cross-device production hardening pass.
+Updated 2026-08-08 for the adaptive mobile-inference hardening pass.
 
 ## Product contract
 
@@ -12,7 +12,7 @@ Updated 2026-08-07 for the cross-device production hardening pass.
 - Camera sessions default to a five-second hands-free guided setup before calibration. Baseline sampling cannot begin during the countdown; users can start immediately or disable guided setup.
 - Active video requests the optional Screen Wake Lock API and reports active, unsupported, system-released, or blocked state without treating wake lock as required for coaching.
 - Camera requests prefer portrait constraints. Compact/touch devices receive a local 90-degree portrait compositor when hardware returns landscape frames.
-- Inference frames are resized to a maximum 720px longest edge. Preview and overlay retain effective source dimensions, so resizing does not crop full-body framing.
+- Inference starts at a 720px longest-edge budget and can step to 576px or 480px after sustained capture-to-result latency. Preview and overlay retain effective source dimensions, so resizing does not crop full-body framing. The Full model and confidence gates remain unchanged.
 - Coach output is educational visible-form guidance. It abstains on missing landmarks, low confidence, unsupported view, stale frames, invalid geometry, calibration mismatch, or framing drift.
 
 ## User-critical flows
@@ -40,13 +40,13 @@ Local gates required before release:
 - mobile fake-camera test using landscape 320×180 source at 390×844 viewport
 - live HTTPS browser check at 390×844 for portrait layout, no horizontal overflow, static asset 200s, and zero console errors
 
-2026-08-07 local production-export evidence:
+2026-08-08 local production-export evidence:
 
-- 97 unit/domain/browser-adapter tests passed, including React unmount cleanup, exact live decision-rule attribution, registry-value coupling, delayed pre-calibration frame rejection, direction-aware lunge classification, visible-chain profile calibration/evaluation, full-foot framing, and operational-versus-heuristic labeling.
-- Full Playwright matrix: 62 passed; 7 explicit platform-bound skips.
-- Desktop Chromium, Firefox, and WebKit: 38 passed; Firefox's synthetic portrait-camera compositor case and 3 WebKit local-video cases were skipped for documented fixture/capability limits. WebKit still passed real local-image pose inference through the BlazePose/WASM compatibility path.
-- Pixel 7 and iPhone 13 emulation: 24 passed; 3 WebKit codec-bound local-video cases skipped.
-- Chrome fake camera: 3 passed, including a 320×180 landscape source rotated to an effective 180×320 portrait preview before inference, guided setup with a directly observed zero-sample invariant, system wake-lock release, lens-switch reacquisition, hidden-page cleanup, and hands-free calibration start.
+- 103 unit/domain/browser-adapter tests passed, including adaptive-profile hysteresis, worker-lifecycle sample reset, custom inference bounds, React unmount cleanup, exact live decision-rule attribution, registry-value coupling, delayed pre-calibration frame rejection, direction-aware lunge classification, visible-chain profile calibration/evaluation, full-foot framing, and operational-versus-heuristic labeling.
+- Full Playwright matrix: 63 passed; 9 explicit platform-bound skips.
+- Desktop Chromium, Firefox, and WebKit: 39 passed; 5 skipped. Firefox's dedicated resize-option probe and synthetic portrait-camera compositor case are skipped; WebKit's 3 local-video cases remain skipped for documented fixture/capability limits. WebKit still passed real local-image pose inference through the BlazePose/WASM compatibility path.
+- Pixel 7 and iPhone 13 emulation: 24 passed; 4 skipped. Pixel Chrome passed all shared mobile and camera behavior except the desktop-only resize probe; iPhone WebKit retains 3 codec-bound local-video skips.
+- Chrome runtime: 4 camera-path tests passed. Coverage includes a 320×180 landscape source rotated to an effective 180×320 portrait preview, guided setup with a directly observed zero-sample invariant, system wake-lock release, lens-switch reacquisition, hidden-page cleanup, hands-free calibration start, and a forced Safari-style resize-option failure that downshifted actual submitted canvas frames to 576×576 after sustained capture-side delay.
 - Firefox synthetic camera: 2 passed for guided setup, local inference startup, wake-lock system release, stop, and hidden-page cleanup. Firefox portrait-compositor coverage is skipped because its synthetic source is not the deterministic Chrome Y4M fixture.
 - Pixel 7 Chrome camera emulation: 3 passed for front/rear source switching, guided setup, portrait rotation, local inference, wake-lock lifecycle, and hidden-page cleanup.
 - Browser-adapter tests cover unsupported and rejected wake-lock requests, system release, active-session stop, and a delayed stale request resolving after stop. Static-host verification requires identical camera and screen-wake-lock permissions on the exported server.

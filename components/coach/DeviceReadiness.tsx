@@ -6,8 +6,10 @@ import {
   hasWorkerInferenceSupport,
   readBrowserCapabilities,
 } from "../../src/vision";
-import type { BrowserCapabilities, CameraRuntimeInfo } from "../../src/vision";
+import type { BrowserCapabilities, CameraRuntimeInfo, FrameDimensions } from "../../src/vision";
+import type { InferenceQualityProfile } from "../../src/vision";
 import type { WakeLockState } from "../../src/browser-session";
+import { MEASUREMENT_THRESHOLDS } from "../../src/domain";
 
 function ReadinessRow({ label, detail, ready }: { label: string; detail: string; ready: boolean }) {
   return (
@@ -26,10 +28,16 @@ function ReadinessRow({ label, detail, ready }: { label: string; detail: string;
 export function DeviceReadiness({
   cameraRuntime,
   cameraMuted,
+  inferenceFrameSize,
+  inferenceQuality,
+  trackingLatencyMs,
   wakeLockState,
 }: {
   cameraRuntime: CameraRuntimeInfo | null;
   cameraMuted: boolean;
+  inferenceFrameSize: FrameDimensions | null;
+  inferenceQuality: InferenceQualityProfile;
+  trackingLatencyMs: number | null;
   wakeLockState: WakeLockState;
 }) {
   const [capabilities, setCapabilities] = useState<BrowserCapabilities | null>(null);
@@ -86,6 +94,14 @@ export function DeviceReadiness({
                   : "WASM CPU fallback will be used"
             }
             ready={capabilities.webgl2 || capabilities.webgl || capabilities.webAssembly}
+          />
+          <ReadinessRow
+            label="Adaptive inference"
+            detail={`${inferenceQuality.label} profile, up to ${inferenceQuality.maxDimension}px local input${inferenceFrameSize ? `, current ${inferenceFrameSize.width}×${inferenceFrameSize.height}` : ""}${trackingLatencyMs === null ? "; adjusts only after sustained latency" : `, ${trackingLatencyMs}ms last local pipeline`}`}
+            ready={
+              trackingLatencyMs === null ||
+              trackingLatencyMs < MEASUREMENT_THRESHOLDS.inference.criticalLatencyMs
+            }
           />
           <ReadinessRow
             label="Hands-free display"

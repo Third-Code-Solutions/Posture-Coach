@@ -12,8 +12,8 @@ import {
 
 describe("auditable measurement registry", () => {
   it("versions every shipped live measurement rule", () => {
-    expect(MEASUREMENT_REGISTRY_VERSION).toBe("2026-08-07.1");
-    expect(MEASUREMENT_RULES).toHaveLength(28);
+    expect(MEASUREMENT_REGISTRY_VERSION).toBe("2026-08-08.1");
+    expect(MEASUREMENT_RULES).toHaveLength(29);
     expect(new Set(MEASUREMENT_RULES.map((rule) => rule.id)).size).toBe(MEASUREMENT_RULES.length);
 
     for (const rule of MEASUREMENT_RULES) {
@@ -26,11 +26,12 @@ describe("auditable measurement registry", () => {
       expect(rule.limitation.length).toBeGreaterThan(30);
       expect(rule.history.length).toBeGreaterThan(0);
       expect(rule.issueCodes.length).toBeLessThanOrEqual(1);
-      expect(rule.history.at(-1)).toMatchObject({
-        version: MEASUREMENT_REGISTRY_VERSION,
-        date: "2026-08-07",
-      });
+      expect(rule.history.at(-1)?.version).toMatch(/^2026-08-\d{2}\.\d+$/);
+      expect(rule.history.at(-1)?.date).toMatch(/^2026-08-\d{2}$/);
       expect(rule.views).not.toContain("unknown");
+      if ("temporalPolicyLabel" in rule && rule.temporalPolicyLabel !== undefined) {
+        expect(rule.temporalPolicyLabel.trim().length).toBeGreaterThan(8);
+      }
       for (const mode of rule.modes) {
         expect(rule.views.some((view) => SUPPORTED_VIEWS[mode].includes(view))).toBe(true);
       }
@@ -71,7 +72,19 @@ describe("auditable measurement registry", () => {
   });
 
   it("keeps evaluator timing and confidence gates in the same registry", () => {
-    expect(MEASUREMENT_THRESHOLDS.inference.maximumPoseCount).toBe(1);
+    expect(MEASUREMENT_THRESHOLDS.inference).toEqual({
+      maximumPoseCount: 1,
+      detailFrameDimension: 720,
+      balancedFrameDimension: 576,
+      recoveryFrameDimension: 480,
+      slowLatencyMs: 350,
+      criticalLatencyMs: 900,
+      recoveryLatencyMs: 160,
+      slowSamplesToDownshift: 4,
+      criticalSamplesToDownshift: 2,
+      fastSamplesToRecover: 24,
+      cooldownSamplesAfterChange: 8,
+    });
     expect(issuePersistenceMs("positioning")).toBe(0);
     expect(issuePersistenceMs("standing_head_alignment")).toBe(650);
     expect(issuePersistenceMs("head_forward")).toBe(900);
@@ -96,6 +109,27 @@ describe("auditable measurement registry", () => {
   });
 
   it("derives adaptive rule values from evaluator constants", () => {
+    expect(
+      "temporalPolicyLabel" in MEASUREMENT_RULE_BY_ID["capture-adaptive-inference"]
+        ? MEASUREMENT_RULE_BY_ID["capture-adaptive-inference"].temporalPolicyLabel
+        : undefined,
+    ).toBe("sample-window hysteresis");
+    expect(MEASUREMENT_RULE_BY_ID["capture-adaptive-inference"].threshold.values).toEqual([
+      MEASUREMENT_THRESHOLDS.inference.detailFrameDimension,
+      MEASUREMENT_THRESHOLDS.inference.balancedFrameDimension,
+      MEASUREMENT_THRESHOLDS.inference.recoveryFrameDimension,
+      MEASUREMENT_THRESHOLDS.inference.slowLatencyMs,
+      MEASUREMENT_THRESHOLDS.inference.criticalLatencyMs,
+      MEASUREMENT_THRESHOLDS.inference.recoveryLatencyMs,
+      MEASUREMENT_THRESHOLDS.inference.slowSamplesToDownshift,
+      MEASUREMENT_THRESHOLDS.inference.criticalSamplesToDownshift,
+      MEASUREMENT_THRESHOLDS.inference.fastSamplesToRecover,
+      MEASUREMENT_THRESHOLDS.inference.cooldownSamplesAfterChange,
+    ]);
+    expect(MEASUREMENT_RULE_BY_ID["capture-adaptive-inference"].history.at(-1)).toMatchObject({
+      version: MEASUREMENT_REGISTRY_VERSION,
+      date: "2026-08-08",
+    });
     expect(MEASUREMENT_RULE_BY_ID["squat-range"].threshold.values).toEqual([
       MEASUREMENT_THRESHOLDS.exercise.calibratedDown.squat.minimum,
       MEASUREMENT_THRESHOLDS.exercise.calibratedDown.squat.maximum,

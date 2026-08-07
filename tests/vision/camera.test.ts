@@ -81,6 +81,7 @@ describe("camera capture constraints", () => {
     expect(getInferenceFrameDimensions(1920, 1080)).toEqual({ width: 720, height: 405 });
     expect(getInferenceFrameDimensions(720, 1280)).toEqual({ width: 405, height: 720 });
     expect(getInferenceFrameDimensions(320, 180)).toEqual({ width: 320, height: 180 });
+    expect(getInferenceFrameDimensions(1920, 1080, 480)).toEqual({ width: 480, height: 270 });
     expect(getInferenceFrameDimensions(0, 180)).toEqual({ width: 0, height: 0 });
   });
 });

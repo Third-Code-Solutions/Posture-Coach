@@ -29,8 +29,12 @@ import {
   MIN_OBSERVED_VIEW_CONFIDENCE,
 } from "../../src/domain";
 import {
+  AdaptiveInferenceQualityController,
   type CameraFacingMode,
   type CameraRuntimeInfo,
+  type FrameDimensions,
+  type InferenceQualityProfile,
+  INFERENCE_QUALITY_PROFILES,
   createObservation,
   getCameraConstraints,
   getInferenceFrameDimensions,
@@ -252,6 +256,10 @@ export function CoachApp() {
   const [cameraRuntime, setCameraRuntime] = useState<CameraRuntimeInfo | null>(null);
   const [cameraMuted, setCameraMuted] = useState(false);
   const [trackingLatencyMs, setTrackingLatencyMs] = useState<number | null>(null);
+  const [inferenceFrameSize, setInferenceFrameSize] = useState<FrameDimensions | null>(null);
+  const [inferenceQuality, setInferenceQuality] = useState<InferenceQualityProfile>(
+    INFERENCE_QUALITY_PROFILES[0],
+  );
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
@@ -285,6 +293,9 @@ export function CoachApp() {
   const calibrationStableRef = useRef(false);
   const processingRef = useRef(false);
   const frameCaptureInFlightRef = useRef(false);
+  const framePipelineStartedAtRef = useRef(new Map<number, number>());
+  const inferenceFrameSizeRef = useRef<FrameDimensions | null>(null);
+  const adaptiveInferenceRef = useRef(new AdaptiveInferenceQualityController());
   const visualSmootherRef = useRef(
     new LandmarkSmoother(MEASUREMENT_THRESHOLDS.temporal.visualSmootherAlphaAtReferenceFrame),
   );
@@ -383,7 +394,15 @@ export function CoachApp() {
         : visualSmootherRef.current.update(observation.landmarks, observation.timestampMs),
     );
     if (!isImage) {
-      setTrackingLatencyMs(Math.max(0, Math.round(performance.now() - message.timestampMs)));
+      const pipelineStartedAt = framePipelineStartedAtRef.current.get(message.sequence);
+      framePipelineStartedAtRef.current.delete(message.sequence);
+      const latencyMs = Math.max(
+        0,
+        Math.round(performance.now() - (pipelineStartedAt ?? message.timestampMs)),
+      );
+      setTrackingLatencyMs(latencyMs);
+      const quality = adaptiveInferenceRef.current.observe(latencyMs);
+      if (quality.changed) setInferenceQuality(quality.profile);
     }
     if (isImage) {
       processingRef.current = false;
@@ -479,6 +498,8 @@ export function CoachApp() {
     lastSubmittedTimestampRef.current = -1;
     frameCaptureInFlightRef.current = false;
     frameCaptureFailureRef.current = false;
+    framePipelineStartedAtRef.current.clear();
+    adaptiveInferenceRef.current.clearSamples();
     visualSmootherRef.current.reset();
     setTrackingLatencyMs(null);
     if (processingRef.current) ensureWorker();
@@ -558,7 +579,11 @@ export function CoachApp() {
       throw new Error("ImageBitmap capture is unavailable in this browser.");
     }
     const canvas = drawPortraitFrame(video);
-    const dimensions = getInferenceFrameDimensions(canvas.width, canvas.height);
+    const dimensions = getInferenceFrameDimensions(
+      canvas.width,
+      canvas.height,
+      adaptiveInferenceRef.current.current.maxDimension,
+    );
     try {
       return await createImageBitmap(canvas, {
         resizeWidth: dimensions.width,
@@ -566,10 +591,32 @@ export function CoachApp() {
         resizeQuality: "high",
       });
     } catch {
-      // Older Safari builds may not implement resize options. Keep local
-      // capture working at source resolution when that option is unavailable.
-      return createImageBitmap(canvas);
+      // Older Safari builds may not implement ImageBitmap resize options.
+      // Scale through a local canvas so those devices keep the same bounded
+      // inference budget instead of receiving a full-resolution frame.
+      return captureScaledCanvasBitmap(canvas, dimensions);
     }
+  };
+
+  const captureScaledCanvasBitmap = async (
+    source: CanvasImageSource,
+    dimensions: { width: number; height: number },
+  ): Promise<ImageBitmap> => {
+    let canvas = frameCanvasRef.current;
+    if (!canvas) {
+      canvas = document.createElement("canvas");
+      frameCanvasRef.current = canvas;
+    }
+    if (canvas.width !== dimensions.width || canvas.height !== dimensions.height) {
+      canvas.width = dimensions.width;
+      canvas.height = dimensions.height;
+    }
+    const context = canvas.getContext("2d", { alpha: false });
+    if (!context) throw new Error("The browser could not create a camera frame canvas.");
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.clearRect(0, 0, dimensions.width, dimensions.height);
+    context.drawImage(source, 0, 0, dimensions.width, dimensions.height);
+    return createImageBitmap(canvas);
   };
 
   const captureBitmap = async (
@@ -578,7 +625,11 @@ export function CoachApp() {
     height: number,
     kind: "video" | "image",
   ): Promise<ImageBitmap> => {
-    const dimensions = getInferenceFrameDimensions(width, height);
+    const dimensions = getInferenceFrameDimensions(
+      width,
+      height,
+      adaptiveInferenceRef.current.current.maxDimension,
+    );
     if (typeof createImageBitmap === "function" && directBitmapSupportRef.current[kind] !== false) {
       try {
         const frame = await createImageBitmap(source, {
@@ -600,19 +651,7 @@ export function CoachApp() {
     if (width <= 0 || height <= 0) {
       throw new Error("The browser did not provide a usable video frame size.");
     }
-    let canvas = frameCanvasRef.current;
-    if (!canvas) {
-      canvas = document.createElement("canvas");
-      frameCanvasRef.current = canvas;
-    }
-    if (canvas.width !== dimensions.width || canvas.height !== dimensions.height) {
-      canvas.width = dimensions.width;
-      canvas.height = dimensions.height;
-    }
-    const context = canvas.getContext("2d", { alpha: false });
-    if (!context) throw new Error("The browser could not create a camera frame canvas.");
-    context.drawImage(source, 0, 0, dimensions.width, dimensions.height);
-    return createImageBitmap(canvas);
+    return captureScaledCanvasBitmap(source, dimensions);
   };
 
   const processFrame = async (mediaTime?: number) => {
@@ -624,6 +663,7 @@ export function CoachApp() {
     const currentTime =
       typeof mediaTime === "number" && Number.isFinite(mediaTime) ? mediaTime : video.currentTime;
     if (currentTime <= lastVideoTimeRef.current) return;
+    const pipelineStartedAtMs = performance.now();
     frameCaptureInFlightRef.current = true;
     try {
       const frame = portraitTransformRef.current
@@ -644,7 +684,22 @@ export function CoachApp() {
           MEASUREMENT_THRESHOLDS.temporal.minimumSubmittedTimestampStepMs,
       );
       lastSubmittedTimestampRef.current = timestampMs;
-      worker.submit(frame, timestampMs, sequenceRef.current++);
+      const sequence = sequenceRef.current++;
+      const acceptedFrameSize = { width: frame.width, height: frame.height };
+      framePipelineStartedAtRef.current.set(sequence, pipelineStartedAtMs);
+      if (!worker.submit(frame, timestampMs, sequence)) {
+        framePipelineStartedAtRef.current.delete(sequence);
+        return;
+      }
+      const previousFrameSize = inferenceFrameSizeRef.current;
+      if (
+        !previousFrameSize ||
+        previousFrameSize.width !== acceptedFrameSize.width ||
+        previousFrameSize.height !== acceptedFrameSize.height
+      ) {
+        inferenceFrameSizeRef.current = acceptedFrameSize;
+        setInferenceFrameSize(acceptedFrameSize);
+      }
     } catch {
       // A frame may disappear during source changes. Cleanup owns the error state.
       if (
@@ -1100,6 +1155,9 @@ export function CoachApp() {
     setPortraitTransformActive(false);
     setCameraRuntime(null);
     setCameraMuted(false);
+    inferenceFrameSizeRef.current = null;
+    setInferenceFrameSize(null);
+    framePipelineStartedAtRef.current.clear();
     const portraitCanvas = portraitPreviewCanvasRef.current;
     if (portraitCanvas) {
       const context = portraitCanvas.getContext("2d");
@@ -1255,6 +1313,7 @@ export function CoachApp() {
     frameCaptureFailureRef.current = false;
     sequenceRef.current = 0;
     visualSmootherRef.current.reset();
+    setInferenceQuality(adaptiveInferenceRef.current.reset());
     setTrackingLatencyMs(null);
     setResult(null);
     setCalibration(createCalibrationProfile(modeRef.current, viewRef.current, mirroredRef.current));
@@ -1463,7 +1522,7 @@ export function CoachApp() {
                 </span>
                 <span>
                   {sourceKind !== null && sourceKind !== "image" && trackingLatencyMs !== null
-                    ? `${trackingLatencyMs}ms live`
+                    ? `${trackingLatencyMs}ms live Â· ${inferenceQuality.label} ${inferenceQuality.maxDimension}px`
                     : formatTime(sessionSeconds)}
                 </span>
               </div>
@@ -1635,6 +1694,9 @@ export function CoachApp() {
               <DeviceReadiness
                 cameraRuntime={cameraRuntime}
                 cameraMuted={cameraMuted}
+                inferenceFrameSize={inferenceFrameSize}
+                inferenceQuality={inferenceQuality}
+                trackingLatencyMs={trackingLatencyMs}
                 wakeLockState={wakeLockState}
               />
             </aside>

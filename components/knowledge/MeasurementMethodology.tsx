@@ -32,6 +32,7 @@ function viewList(rule: MeasurementRule): string {
 }
 
 function persistenceLabel(rule: MeasurementRule): string {
+  if (rule.temporalPolicyLabel) return rule.temporalPolicyLabel;
   if (rule.persistenceMs === 0) return "immediate";
   if (rule.id === "rep-alignment-persistence") {
     return `${rule.persistenceMs / 1_000}s rep-rejection window`;

@@ -1,10 +1,20 @@
 import type { AnalysisMode, CameraView, IssueCode } from "../contracts";
 
-export const MEASUREMENT_REGISTRY_VERSION = "2026-08-07.1";
+export const MEASUREMENT_REGISTRY_VERSION = "2026-08-08.1";
 
 export const MEASUREMENT_THRESHOLDS = {
   inference: {
     maximumPoseCount: 1,
+    detailFrameDimension: 720,
+    balancedFrameDimension: 576,
+    recoveryFrameDimension: 480,
+    slowLatencyMs: 350,
+    criticalLatencyMs: 900,
+    recoveryLatencyMs: 160,
+    slowSamplesToDownshift: 4,
+    criticalSamplesToDownshift: 2,
+    fastSamplesToRecover: 24,
+    cooldownSamplesAfterChange: 8,
   },
   confidence: {
     modelPoseDetectionScore: 0.55,
@@ -129,7 +139,8 @@ export type MeasurementUnit =
   | "degrees"
   | "score"
   | "count"
-  | "milliseconds";
+  | "milliseconds"
+  | "pixels";
 export type MeasurementProvenance = "product-heuristic" | "operational-only";
 
 export interface MeasurementThresholdDefinition {
@@ -156,6 +167,7 @@ export interface MeasurementRule {
   unit: MeasurementUnit;
   threshold: MeasurementThresholdDefinition;
   persistenceMs: number;
+  temporalPolicyLabel?: string;
   provenance: MeasurementProvenance;
   validationStatus: "unvalidated";
   rationale: string;
@@ -164,7 +176,11 @@ export interface MeasurementRule {
 }
 
 const initialRevision = (change: string): readonly MeasurementRuleRevision[] => [
-  { version: MEASUREMENT_REGISTRY_VERSION, date: "2026-08-07", change },
+  { version: "2026-08-07.1", date: "2026-08-07", change },
+];
+
+const currentRevision = (change: string): readonly MeasurementRuleRevision[] => [
+  { version: MEASUREMENT_REGISTRY_VERSION, date: "2026-08-08", change },
 ];
 
 const heuristicLimitation =
@@ -291,6 +307,45 @@ export const MEASUREMENT_RULES = [
     limitation:
       "This orders local observations only and does not measure end-to-end camera latency.",
     history: initialRevision("Published the existing stale-frame rejection rule."),
+  },
+  {
+    id: "capture-adaptive-inference",
+    label: "Adaptive local inference budget",
+    category: "framing",
+    issueCodes: [],
+    modes: ["standing", "desk", "squat", "plank", "pushup", "lunge", "curl"],
+    views: ["front", "side", "three-quarter"],
+    metric: "Longest local inference-frame edge selected from sustained capture-to-result latency",
+    unit: "pixels",
+    threshold: {
+      kind: "adaptive",
+      values: [
+        MEASUREMENT_THRESHOLDS.inference.detailFrameDimension,
+        MEASUREMENT_THRESHOLDS.inference.balancedFrameDimension,
+        MEASUREMENT_THRESHOLDS.inference.recoveryFrameDimension,
+        MEASUREMENT_THRESHOLDS.inference.slowLatencyMs,
+        MEASUREMENT_THRESHOLDS.inference.criticalLatencyMs,
+        MEASUREMENT_THRESHOLDS.inference.recoveryLatencyMs,
+        MEASUREMENT_THRESHOLDS.inference.slowSamplesToDownshift,
+        MEASUREMENT_THRESHOLDS.inference.criticalSamplesToDownshift,
+        MEASUREMENT_THRESHOLDS.inference.fastSamplesToRecover,
+        MEASUREMENT_THRESHOLDS.inference.cooldownSamplesAfterChange,
+      ],
+      display: `${MEASUREMENT_THRESHOLDS.inference.detailFrameDimension}/${MEASUREMENT_THRESHOLDS.inference.balancedFrameDimension}/${MEASUREMENT_THRESHOLDS.inference.recoveryFrameDimension}px profiles; downshift after ${MEASUREMENT_THRESHOLDS.inference.slowSamplesToDownshift} results at â‰¥${MEASUREMENT_THRESHOLDS.inference.slowLatencyMs}ms or ${MEASUREMENT_THRESHOLDS.inference.criticalSamplesToDownshift} at â‰¥${MEASUREMENT_THRESHOLDS.inference.criticalLatencyMs}ms; recover after ${MEASUREMENT_THRESHOLDS.inference.fastSamplesToRecover} at â‰¤${MEASUREMENT_THRESHOLDS.inference.recoveryLatencyMs}ms`,
+      formula:
+        "Hysteretic three-profile state machine using consecutive capture-to-result latency samples",
+    },
+    persistenceMs: 0,
+    temporalPolicyLabel: "sample-window hysteresis",
+    provenance: "operational-only",
+    validationStatus: "unvalidated",
+    rationale:
+      "Sustained latency lowers local preprocessing cost on weaker devices while retaining the Full pose model, full-frame preview, and one-frame backpressure.",
+    limitation:
+      "Resolution adaptation cannot guarantee zero delay or identical accuracy on every camera and processor. Physical-device validation remains required.",
+    history: currentRevision(
+      "Added hysteretic adaptive input sizing for sustained mobile latency.",
+    ),
   },
   {
     id: "calibration-stable-window",

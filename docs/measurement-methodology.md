@@ -1,6 +1,6 @@
 # Measurement methodology
 
-Registry version: `2026-08-07.1`
+Registry version: `2026-08-08.1`
 
 Third Code Posture separates three things that are easy to confuse:
 
@@ -12,7 +12,7 @@ None of these layers diagnoses a condition or turns a 2D camera value into a cli
 
 ## Source of truth
 
-`src/domain/measurement-registry/index.ts` owns every numeric value used by confidence, calibration, view estimation, sustained posture cues, exercise range, alignment, and rep timing. The same module publishes 28 user-facing capture and coaching decision rules. Each rule contains:
+`src/domain/measurement-registry/index.ts` owns every numeric value used by confidence, calibration, view estimation, adaptive local inference, sustained posture cues, exercise range, alignment, and rep timing. The same module publishes 29 user-facing capture and coaching decision rules. Each rule contains:
 
 - stable ID;
 - optional affected issue codes plus applicable modes;
@@ -27,6 +27,10 @@ None of these layers diagnoses a condition or turns a 2D camera value into a cli
 The evaluator imports these values. The Posture Guide and threshold-driven pauses, corrective cues, and rep decisions render exact IDs from the same registry. This prevents documentation from silently drifting away from production behavior.
 
 Presentation-only sizes, colors, line widths, and UI refresh cadence are interface tokens, not posture decision thresholds, and are outside this registry.
+
+## Adaptive local inference
+
+Live sessions start with a `720px` longest-edge input budget while preserving the uncropped preview. Sustained capture-to-result latency can step preprocessing down to `576px` and then `480px`; a long fast run recovers one profile at a time. Cooldown and consecutive-sample requirements prevent one slow warm-up frame or brief interruption from changing quality. Recreating the inference worker clears incomplete sample streaks without silently raising or lowering the active profile. This changes local preprocessing size only: it never swaps out the Full pose model, weakens confidence gates, crops the body, or sends frames elsewhere.
 
 ## Calibration
 
