@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { FeedbackCard } from "../feedback/FeedbackCard";
+import { PostureLibrary } from "../knowledge/PostureLibrary";
 import { ModeSelector } from "../controls/ModeSelector";
 import { DeviceReadiness } from "./DeviceReadiness";
 import { useSessionAssistance } from "./useSessionAssistance";
@@ -1320,6 +1321,9 @@ export function CoachApp() {
             <span className="trust-note">No diagnosis</span>
             <span className="trust-note">No paid API</span>
           </div>
+          <a className="guide-link" href="#posture-guide">
+            Learn without camera <span aria-hidden="true">↓</span>
+          </a>
           <div className="steps-panel" aria-label="How it works">
             <span className="steps-title">Three quiet steps</span>
             <span className="step-row">
@@ -1669,6 +1673,8 @@ export function CoachApp() {
           )}
         </section>
       </section>
+
+      <PostureLibrary />
 
       <footer className="footer-note">
         <p>

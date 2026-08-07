@@ -89,6 +89,69 @@ test.describe("privacy-first posture coach smoke", () => {
     await expect(page.getByText(/Side profile: place the camera/)).toBeVisible();
   });
 
+  test("provides searchable evidence guidance without starting a camera", async ({
+    page,
+  }, testInfo) => {
+    const externalRequests: string[] = [];
+    const localOrigin = new URL(testInfo.project.use.baseURL ?? "http://127.0.0.1:3010").origin;
+    page.on("request", (request) => {
+      const url = request.url();
+      if (new URL(url).origin !== localOrigin) externalRequests.push(url);
+    });
+
+    await page.goto("/");
+    await page.getByRole("link", { name: /Learn without camera/ }).click();
+    await expect(page).toHaveURL(/#posture-guide$/);
+    await expect(page.locator("#posture-guide")).toBeInViewport({ ratio: 0.1 });
+    await expect(
+      page.getByRole("heading", { name: /Know what the camera can—and cannot—tell you/ }),
+    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Educational heuristic" })).toBeVisible();
+    await expect(page.getByText(/tracking confidence means landmarks are visible/i)).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Stop if pain starts or worsens." }),
+    ).toBeVisible();
+    await expect(page.getByText(/Camera cannot assess symptoms/i)).toBeVisible();
+    await expect(page.getByText(/Seek urgent medical advice when back pain/i)).toBeVisible();
+    if (process.env.POSTURE_GUIDE_SCREENSHOT === "1") {
+      await page.screenshot({
+        path: `output/playwright/posture-guide-overview-${testInfo.project.name}.png`,
+        fullPage: false,
+      });
+    }
+
+    const search = page.getByRole("searchbox", { name: "Search posture guidance" });
+    await search.fill("valgus programs");
+    await expect(page.getByText("1 topic found")).toBeVisible();
+    const kneeTopic = page.getByText("Dynamic knee tracking", { exact: true });
+    await kneeTopic.click();
+    await expect(page.getByRole("heading", { name: "What you may notice" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "What evidence supports" })).toBeVisible();
+    await expect(page.getByText("Camera limit", { exact: true })).toBeVisible();
+    const source = page
+      .locator(".knowledge-card[open]")
+      .getByRole("link", { name: /dynamic knee valgus/i });
+    await expect(source).toHaveAttribute("href", /^https:\/\//);
+    await expect(source).toHaveAttribute("target", "_blank");
+
+    await search.fill("");
+    await page.getByRole("button", { name: "Desk setup", exact: true }).click();
+    await expect(page.getByText("5 topics found")).toBeVisible();
+    await expect(
+      page.getByText("Desk setup should support comfort and position changes", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Stop if pain starts or worsens." }),
+    ).toBeVisible();
+    if (process.env.POSTURE_GUIDE_SCREENSHOT === "1") {
+      await page.screenshot({
+        path: `output/playwright/posture-guide-${testInfo.project.name}.png`,
+        fullPage: false,
+      });
+    }
+    expect(externalRequests).toEqual([]);
+  });
+
   test("shows safe fallbacks for camera denial and invalid uploads", async ({ page }) => {
     await page.addInitScript(() => {
       Object.defineProperty(navigator, "mediaDevices", {

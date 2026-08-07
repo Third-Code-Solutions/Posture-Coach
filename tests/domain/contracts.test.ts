@@ -302,6 +302,7 @@ describe("geometry and deterministic coaching", () => {
     expect(result.status).toBe("valid");
     expect(result.issues).toHaveLength(0);
     expect(result.feedback.title).toBe("Standing alignment looks steady");
+    expect(result.feedback.body).toContain("not a health assessment or medical clearance");
   });
 
   it("teaches a persistent side-view head and trunk alignment drift", () => {
@@ -583,6 +584,7 @@ describe("geometry and deterministic coaching", () => {
     const pushup = pushupEngine.process(makeObservation({ timestampMs: 1_200, sequence: 2 }));
     expect(pushup.validRep).toBe(true);
     expect(pushup.repCount).toBe(1);
+    expect(pushup.feedback.body).toContain("not a safety or health clearance");
   });
 
   it("counts a valid lunge only when one leg leads in a split stance", () => {
@@ -675,18 +677,27 @@ describe("geometry and deterministic coaching", () => {
     expect(counted.repCount).toBe(1);
 
     const driftEngine = createEngine();
-    setStableCalibration(driftEngine, "curl");
+    setStableCalibration(driftEngine, "curl", "front");
     const drifted = makeLandmarks({
       leftElbow: { x: 0.67, y: 0.6 },
       rightElbow: { x: 0.33, y: 0.6 },
       leftWrist: { x: 0.62, y: 0.42 },
       rightWrist: { x: 0.38, y: 0.42 },
     });
-    driftEngine.process(makeObservation({ landmarks: drifted, timestampMs: 0 }));
-    const driftHold = driftEngine.process(
-      makeObservation({ landmarks: drifted, timestampMs: 500, sequence: 1 }),
+    driftEngine.process(
+      makeObservation({ landmarks: drifted, cameraView: "front", timestampMs: 0 }),
     );
-    const rejected = driftEngine.process(makeObservation({ timestampMs: 1_200, sequence: 2 }));
+    const driftHold = driftEngine.process(
+      makeObservation({
+        landmarks: drifted,
+        cameraView: "front",
+        timestampMs: 500,
+        sequence: 1,
+      }),
+    );
+    const rejected = driftEngine.process(
+      makeObservation({ cameraView: "front", timestampMs: 1_200, sequence: 2 }),
+    );
     expect(rejected.validRep).toBe(false);
     expect(rejected.rejectedRep).toBe("alignment_not_stable");
     expect(driftHold.metrics.elbowFlare).toBeGreaterThan(0.5);
@@ -752,6 +763,37 @@ describe("geometry and deterministic coaching", () => {
     expect(result.issues).toEqual(
       expect.arrayContaining([expect.objectContaining({ code: "squat_knee_alignment" })]),
     );
+  });
+
+  it("does not emit side-plane depth or front-plane curl cues from unsupported views", () => {
+    const squat = createEngine();
+    setStableCalibration(squat, "squat", "front");
+    const partialSquat = makeLandmarks({
+      leftKnee: { x: 0.45, y: 0.78 },
+      rightKnee: { x: 0.55, y: 0.78 },
+      leftAnkle: { x: 0.57, y: 0.88 },
+      rightAnkle: { x: 0.67, y: 0.88 },
+    });
+    for (const [sequence, timestampMs] of [0, 800, 1_600].entries()) {
+      const result = squat.process(
+        makeObservation({
+          landmarks: partialSquat,
+          cameraView: "front",
+          timestampMs,
+          sequence,
+        }),
+      );
+      expect(result.issues.some((issue) => issue.code === "squat_depth")).toBe(false);
+    }
+
+    const curl = createEngine();
+    setStableCalibration(curl, "curl", "side");
+    const flared = makeLandmarks({ leftElbow: { x: 0.72 }, rightElbow: { x: 0.28 } });
+    for (const [sequence, timestampMs] of [0, 800, 1_600].entries()) {
+      const result = curl.process(makeObservation({ landmarks: flared, timestampMs, sequence }));
+      expect(result.metrics.elbowFlare).toBeUndefined();
+      expect(result.issues.some((issue) => issue.code === "curl_control")).toBe(false);
+    }
   });
 
   it("checks the push-up body line in a side view", () => {

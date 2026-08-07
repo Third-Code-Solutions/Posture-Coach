@@ -1,17 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { type IssueCode } from "../../src/domain";
+import { type AnalysisMode, type IssueCode } from "../../src/domain";
 import {
+  EVIDENCE_CATEGORIES,
+  EVIDENCE_CATEGORY_LABELS,
   ISSUE_EVIDENCE_IDS,
+  ISSUE_MEASUREMENT_STATUS,
+  MODE_GUIDE_EVIDENCE_IDS,
   POSTURE_EVIDENCE,
   POSTURE_EVIDENCE_BY_ID,
   POSTURE_EVIDENCE_CACHE_VERSION,
   POSTURE_EVIDENCE_SOURCES,
   evidenceForIds,
+  findPostureEvidence,
 } from "../../src/knowledge";
 
 describe("offline posture evidence cache", () => {
   it("has a reviewed version and only direct HTTPS source links", () => {
-    expect(POSTURE_EVIDENCE_CACHE_VERSION).toBe("2026-08-06");
+    expect(POSTURE_EVIDENCE_CACHE_VERSION).toBe("2026-08-07");
     expect(POSTURE_EVIDENCE_SOURCES.length).toBeGreaterThanOrEqual(20);
     expect(POSTURE_EVIDENCE_SOURCES.every((source) => source.url.startsWith("https://"))).toBe(
       true,
@@ -34,6 +39,35 @@ describe("offline posture evidence cache", () => {
         expect(POSTURE_EVIDENCE_SOURCES.some((source) => source.id === sourceId)).toBe(true);
       }
     }
+  });
+
+  it("covers every guide category", () => {
+    expect(EVIDENCE_CATEGORIES).toEqual(Object.keys(EVIDENCE_CATEGORY_LABELS));
+    for (const category of EVIDENCE_CATEGORIES) {
+      expect(POSTURE_EVIDENCE.some((entry) => entry.category === category)).toBe(true);
+    }
+  });
+
+  it("searches every guidance field with all query terms", () => {
+    expect(findPostureEvidence()).toHaveLength(POSTURE_EVIDENCE.length);
+    expect(findPostureEvidence({ category: "desk" }).map((entry) => entry.id)).toContain(
+      "desk-setup",
+    );
+    expect(
+      findPostureEvidence({ query: "  CAMERA   PERFECT " }).map((entry) => entry.id),
+    ).toContain("neutral-posture");
+    expect(
+      findPostureEvidence({ category: "exercise", query: "knee tracking" }).map(
+        (entry) => entry.id,
+      ),
+    ).toEqual(["dynamic-knee-valgus", "squat-mode-guide"]);
+    expect(findPostureEvidence({ category: "desk", query: "scoliosis" })).toEqual([]);
+    expect(
+      findPostureEvidence({ query: "bladder bowel emergency" }).map((entry) => entry.id),
+    ).toEqual(["when-to-seek-care"]);
+    expect(findPostureEvidence({ query: "product heuristics" }).map((entry) => entry.id)).toContain(
+      "calibration-and-confidence",
+    );
   });
 
   it("maps every live evaluator issue to cached evidence", () => {
@@ -60,6 +94,22 @@ describe("offline posture evidence cache", () => {
       expect(evidenceForIds(ISSUE_EVIDENCE_IDS[issueCode]).length).toBe(
         ISSUE_EVIDENCE_IDS[issueCode].length,
       );
+      expect(ISSUE_MEASUREMENT_STATUS[issueCode].validationStatus).toBe("unvalidated");
+      expect(ISSUE_MEASUREMENT_STATUS[issueCode].note.length).toBeGreaterThan(40);
     }
+    expect(ISSUE_MEASUREMENT_STATUS.positioning.thresholdProvenance).toBe("operational-only");
+    expect(ISSUE_MEASUREMENT_STATUS.squat_depth.thresholdProvenance).toBe("product-heuristic");
+  });
+
+  it("provides a mode-specific guide for every coaching mode", () => {
+    const modes: AnalysisMode[] = ["standing", "desk", "squat", "plank", "pushup", "lunge", "curl"];
+    for (const mode of modes) {
+      expect(MODE_GUIDE_EVIDENCE_IDS[mode].length).toBeGreaterThan(0);
+      expect(evidenceForIds(MODE_GUIDE_EVIDENCE_IDS[mode])).toHaveLength(
+        MODE_GUIDE_EVIDENCE_IDS[mode].length,
+      );
+    }
+    expect(ISSUE_EVIDENCE_IDS.plank_alignment).toEqual(["plank-mode-guide"]);
+    expect(ISSUE_EVIDENCE_IDS.curl_control).toEqual(["curl-mode-guide"]);
   });
 });

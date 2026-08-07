@@ -19,7 +19,7 @@ import {
 import { assessConfidence } from "../confidence";
 import { LandmarkSmoother, PersistenceGate } from "../temporal";
 import { angleAt, isFinitePoint, midpoint, verticalDeviation } from "../geometry";
-import { evidenceIdsForIssue } from "../../knowledge";
+import { evidenceIdsForIssue, evidenceIdsForMode } from "../../knowledge";
 
 type RawIssue = Omit<EvaluationIssue, "persistenceMs">;
 type ExerciseMode = Exclude<AnalysisMode, "desk" | "standing">;
@@ -539,7 +539,13 @@ function exerciseFrame(
         );
       }
     }
-    if (metric !== null && metric > downThreshold && metric < 140 && state.candidate) {
+    if (
+      metric !== null &&
+      observation.cameraView === "side" &&
+      metric > downThreshold &&
+      metric < 140 &&
+      state.candidate
+    ) {
       issues.push(
         issue(
           mode === "squat" ? "squat_depth" : "lunge_alignment",
@@ -599,7 +605,8 @@ function exerciseFrame(
         ),
       );
     }
-    const flare = mode === "curl" ? elbowFlare(observation) : null;
+    const flare =
+      mode === "curl" && observation.cameraView === "front" ? elbowFlare(observation) : null;
     if (flare !== null) {
       metrics.elbowFlare = flare;
     }
@@ -986,8 +993,8 @@ function feedbackFor(result: {
       priority: 20,
       tone: "positive",
       title: "Rep logged",
-      body: "Nice. Keep the same controlled rhythm.",
-      evidenceIds: ["controlled-exercise"],
+      body: "Movement crossed this mode's local thresholds. Keep a comfortable, controlled rhythm; this count is not a safety or health clearance.",
+      evidenceIds: evidenceIdsForMode(result.mode),
     };
   if (result.mode === "standing")
     return {
@@ -995,15 +1002,16 @@ function feedbackFor(result: {
       priority: 20,
       tone: "positive",
       title: "Standing alignment looks steady",
-      body: "These visible landmarks are close to your relaxed standing baseline. Keep breathing, avoid bracing, and change position regularly.",
-      evidenceIds: ["standing-alignment", "static-posture"],
+      body: "No supported persistent deviation is detected in this view. Visible landmarks remain close to your relaxed baseline; this is not a health assessment or medical clearance.",
+      evidenceIds: evidenceIdsForMode(result.mode),
     };
   return {
     id: "ready",
     priority: 10,
     tone: "positive",
     title: "Looking steady",
-    body: "Keep breathing normally and use the visual guide as a gentle cue.",
+    body: "No supported persistent issue is detected in this view. Keep breathing normally; this local result is not a safety or health clearance.",
+    evidenceIds: evidenceIdsForMode(result.mode),
   };
 }
 

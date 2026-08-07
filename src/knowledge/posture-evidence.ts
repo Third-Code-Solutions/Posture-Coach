@@ -1,6 +1,6 @@
-import type { IssueCode } from "../domain/contracts";
+import type { AnalysisMode, IssueCode } from "../domain/contracts";
 
-export const POSTURE_EVIDENCE_CACHE_VERSION = "2026-08-06";
+export const POSTURE_EVIDENCE_CACHE_VERSION = "2026-08-07";
 
 export type EvidenceType =
   | "government-guideline"
@@ -11,10 +11,28 @@ export type EvidenceType =
   | "biomechanics-study";
 
 export type EvidenceLevel =
-  "guideline" | "systematic-review" | "clinical-guidance" | "clinical-boundary" | "biomechanics";
+  | "guideline"
+  | "systematic-review"
+  | "scoping-review"
+  | "clinical-guidance"
+  | "clinical-boundary"
+  | "biomechanics";
 
 export type EvidenceCategory =
   "general" | "desk" | "head-and-neck" | "trunk-and-spine" | "asymmetry" | "exercise";
+
+export type EvidenceCategoryFilter = EvidenceCategory | "all";
+
+export const EVIDENCE_CATEGORY_LABELS: Record<EvidenceCategory, string> = {
+  general: "Foundations",
+  desk: "Desk setup",
+  "head-and-neck": "Head + neck",
+  "trunk-and-spine": "Trunk + spine",
+  asymmetry: "Asymmetry",
+  exercise: "Movement",
+};
+
+export const EVIDENCE_CATEGORIES = Object.keys(EVIDENCE_CATEGORY_LABELS) as EvidenceCategory[];
 
 export interface EvidenceSource {
   id: string;
@@ -87,6 +105,22 @@ export const POSTURE_EVIDENCE_SOURCES = [
     url: "https://pubmed.ncbi.nlm.nih.gov/31000345/",
   },
   {
+    id: "single-camera-markerless-review",
+    title: "Healthcare applications of single camera markerless motion capture",
+    publisher: "PeerJ; indexed by PubMed",
+    publishedOrUpdated: "2022; scoping review",
+    evidenceType: "scoping-review",
+    url: "https://pubmed.ncbi.nlm.nih.gov/35642200/",
+  },
+  {
+    id: "markerless-dynamic-validation",
+    title: "Validity and usability of markerless motion capture for dynamic movements",
+    publisher: "Medicine & Science in Sports & Exercise; indexed by PubMed",
+    publishedOrUpdated: "2025; validation study",
+    evidenceType: "biomechanics-study",
+    url: "https://pubmed.ncbi.nlm.nih.gov/39733226/",
+  },
+  {
     id: "osha-evaluation",
     title: "eTools: Computer Workstations - Evaluation Checklist",
     publisher: "U.S. Occupational Safety and Health Administration",
@@ -157,6 +191,14 @@ export const POSTURE_EVIDENCE_SOURCES = [
     publishedOrUpdated: "Last reviewed 2023-04-27",
     evidenceType: "clinical-guidance",
     url: "https://www.nhs.uk/symptoms/neck-pain-and-stiff-neck/",
+  },
+  {
+    id: "nhs-back-pain",
+    title: "Back pain",
+    publisher: "National Health Service",
+    publishedOrUpdated: "Last reviewed 2026-03-05",
+    evidenceType: "clinical-guidance",
+    url: "https://www.nhs.uk/conditions/back-pain/",
   },
   {
     id: "medlineplus-kyphosis",
@@ -266,6 +308,64 @@ export const POSTURE_EVIDENCE = [
     sourceIds: ["osha-workstation", "osha-positions"],
   },
   {
+    id: "when-to-seek-care",
+    title: "Back pain: when to stop and seek medical care",
+    category: "general",
+    evidenceLevel: "clinical-guidance",
+    signal:
+      "When using this coach with back pain, pain worsens during practice, follows serious trauma, or appears with new neurological, bladder, bowel, chest, feverish, or rapidly worsening symptoms.",
+    claim:
+      "NHS guidance separates routine review, urgent advice, and emergency care for back pain. Bilateral leg weakness or numbness, loss of feeling around the genitals or anus, bladder or bowel changes, chest pain, or pain after a serious accident require emergency assessment.",
+    actions: [
+      "Stop the session if back pain starts or worsens; this coach cannot assess the cause.",
+      "Use your local emergency service for the emergency symptoms above, and urgent medical advice for sudden severe or rapidly worsening pain or feeling systemically unwell.",
+      "Seek qualified care when symptoms persist, change shape, limit daily activity, or concern you.",
+    ],
+    limitations:
+      "This is general UK NHS escalation guidance, not diagnosis or individualized triage. Emergency numbers and care pathways vary by location.",
+    sourceIds: ["nhs-back-pain", "nice-low-back"],
+  },
+  {
+    id: "calibration-and-confidence",
+    title: "Calibration and confidence are not a health score",
+    category: "general",
+    evidenceLevel: "clinical-boundary",
+    signal:
+      "The app reports a completed baseline, steady evidence, or a high landmark-confidence state.",
+    claim:
+      "Calibration stores a personal visual baseline for this session. Landmark confidence describes model visibility, not posture quality. Exact camera thresholds and persistence windows in this app are product heuristics and have not been clinically validated.",
+    actions: [
+      "Calibrate in a relaxed, comfortable position rather than forcing an upright pose.",
+      "Treat a steady result as no supported persistent deviation detected in this view—not medical clearance.",
+      "Reframe or change view when landmarks disappear instead of treating tracking failure as a body problem.",
+    ],
+    limitations:
+      "No product-specific study has established sensitivity, specificity, measurement error, false-cue rate, or clinical accuracy for this evaluator.",
+    sourceIds: ["standing-alignment-study", "mobile-posture-validation"],
+  },
+  {
+    id: "camera-measurement-limits",
+    title: "One camera sees a 2D estimate, not the whole body",
+    category: "general",
+    evidenceLevel: "scoping-review",
+    signal:
+      "A result depends on camera view, framing, distance, roll, lighting, clothing, occlusion, or out-of-plane movement.",
+    claim:
+      "Single-camera markerless systems can be useful for simple measurements in one plane, but reviews report lower capability for detailed 3D kinematics and fine or occluded movement. Validation error varies by system, plane, task, and variable.",
+    actions: [
+      "Use the requested front or side view, keep the camera level, and keep required joints visible.",
+      "Repeat the check after reframing; ignore cues that do not match what you can clearly see or feel.",
+      "Use qualified in-person assessment for diagnosis, balance, pain, structural shape, or rehabilitation decisions.",
+    ],
+    limitations:
+      "Evidence from other markerless systems does not validate this MediaPipe pipeline, its thresholds, or every phone, body, room, and movement.",
+    sourceIds: [
+      "single-camera-markerless-review",
+      "markerless-dynamic-validation",
+      "mobile-posture-validation",
+    ],
+  },
+  {
     id: "standing-alignment",
     title: "Relaxed standing alignment is a flexible reference",
     category: "general",
@@ -304,6 +404,96 @@ export const POSTURE_EVIDENCE = [
     limitations:
       "This session only sees the visible interval in front of the camera; it cannot estimate your full-day sitting exposure.",
     sourceIds: ["niosh-risk-factors", "niosh-office", "osha-positions"],
+  },
+  {
+    id: "desk-setup",
+    title: "Desk setup should support comfort and position changes",
+    category: "desk",
+    evidenceLevel: "guideline",
+    signal:
+      "The chair, display, keyboard, pointing device, or work surface makes the user reach, twist, look down, or remain unsupported.",
+    claim:
+      "OSHA and NIOSH workstation guidance recommends fitting equipment to the user, keeping frequently used items close, supporting the feet and back, and allowing position changes. No single setup is correct for every body or task.",
+    actions: [
+      "Bring the display and controls close enough to use without repeated reaching or twisting.",
+      "Support your feet and back in a comfortable position, then change position regularly.",
+      "Use a separate keyboard or stand when a laptop-only setup forces sustained neck bending.",
+    ],
+    limitations:
+      "A camera cannot measure screen glare, contact pressure, reach force, furniture dimensions, vision needs, or whether equipment fits your body.",
+    sourceIds: ["osha-workstation", "osha-evaluation", "niosh-office", "cuh-seating"],
+  },
+  {
+    id: "desk-chair-and-feet",
+    title: "Chair, back support, and feet",
+    category: "desk",
+    evidenceLevel: "guideline",
+    signal:
+      "The seat leaves the back or feet unsupported, presses behind the knees, or makes the user perch or reach for the floor.",
+    claim:
+      "OSHA workstation guidance recommends a stable, adjustable chair that supports the back and thighs while the feet rest on the floor or a footrest. Fit depends on the person and task.",
+    actions: [
+      "Adjust seat height so your feet rest securely; use a stable footrest when they do not reach.",
+      "Let the backrest support you without forcing one rigid position.",
+      "Leave comfortable clearance behind the knees and change position regularly.",
+    ],
+    limitations:
+      "A camera cannot measure seat pressure, chair dimensions, circulation, comfort, disability needs, or whether a chair is safe and stable.",
+    sourceIds: ["osha-workstation", "osha-positions", "osha-evaluation", "cuh-seating"],
+  },
+  {
+    id: "desk-display-and-device",
+    title: "Display, laptop, and phone position",
+    category: "desk",
+    evidenceLevel: "guideline",
+    signal:
+      "The display or handheld device repeatedly pulls the head down, to one side, or far forward.",
+    claim:
+      "OSHA recommends placing the main display directly in front, at a comfortable viewing distance, with the top around or below eye level. Laptop-only work can couple screen and keyboard positions, so accessories may improve adjustability.",
+    actions: [
+      "Center the main display and adjust height and distance until text is readable without leaning.",
+      "For longer laptop use, consider a stable riser plus separate keyboard and pointing device.",
+      "Bring a phone closer to eye level for short tasks, then lower your arms and change position.",
+    ],
+    limitations:
+      "A camera cannot assess eyesight, font size, display quality, device stability, task duration, or the safest equipment arrangement for you.",
+    sourceIds: ["osha-workstation", "osha-positions", "osha-evaluation", "cuh-seating"],
+  },
+  {
+    id: "desk-input-and-reach",
+    title: "Keyboard, mouse, forearms, and reach",
+    category: "desk",
+    evidenceLevel: "guideline",
+    signal:
+      "Frequently used controls require repeated reaching, lifted shoulders, unsupported forearms, or bent wrists.",
+    claim:
+      "OSHA guidance recommends placing keyboard and pointing devices close together and within comfortable reach, with shoulders relaxed and wrists near neutral. Contact pressure and repeated reaching also matter.",
+    actions: [
+      "Bring frequently used controls close and keep the mouse beside the keyboard.",
+      "Support the forearms when comfortable without pressing a hard edge into the wrists or elbows.",
+      "Move the whole task closer instead of repeatedly reaching from the shoulder.",
+    ],
+    limitations:
+      "A camera cannot measure grip force, key force, repetition exposure, contact pressure, sensation, or upper-limb symptoms.",
+    sourceIds: ["osha-workstation", "osha-evaluation", "niosh-risk-factors"],
+  },
+  {
+    id: "desk-lighting-and-variation",
+    title: "Lighting, glare, and task variation",
+    category: "desk",
+    evidenceLevel: "guideline",
+    signal:
+      "Glare, small text, or an unchanging task encourages squinting, leaning, or holding one position.",
+    claim:
+      "OSHA and NIOSH office guidance treats lighting, glare, task design, duration, and position changes as part of workstation ergonomics. Posture alone is not the whole exposure.",
+    actions: [
+      "Reduce reflections by repositioning the display, light, or blinds, and use readable text size.",
+      "Alternate tasks and take short, user-controlled movement or visual breaks.",
+      "Change position before discomfort builds instead of waiting for a camera warning.",
+    ],
+    limitations:
+      "A camera cannot measure illuminance, glare, visual strain, workload, break needs, or total daily exposure.",
+    sourceIds: ["osha-workstation", "osha-evaluation", "niosh-office", "niosh-risk-factors"],
   },
   {
     id: "forward-head",
@@ -523,8 +713,54 @@ export const POSTURE_EVIDENCE = [
     sourceIds: ["knee-valgus-exercise", "nice-low-back"],
   },
   {
+    id: "squat-mode-guide",
+    title: "Squat mode: depth and knee path are camera heuristics",
+    category: "exercise",
+    evidenceLevel: "clinical-boundary",
+    signal:
+      "In the selected view, the app compares visible hip depth and the 2D knee path with its local movement thresholds.",
+    claim:
+      "Exercise studies can describe knee movement or changes after training, but they do not validate this app's depth or knee-path cutoffs. Squat results are repeatability cues, not injury prediction or a universal form standard.",
+    actions: [
+      "Use the requested front view for knee-path cues and side view for depth cues.",
+      "Choose a comfortable stance and range you can repeat without pain or loss of balance.",
+      "Ignore the counter when tracking is unstable; reframe with hips, knees, ankles, and feet visible.",
+    ],
+    limitations:
+      "The app cannot measure 3D joint loading, foot pressure, strength, mobility, fatigue, balance, pain, or whether squatting is appropriate for you.",
+    sourceIds: [
+      "knee-valgus-exercise",
+      "markerless-dynamic-validation",
+      "single-camera-markerless-review",
+      "nice-low-back",
+    ],
+  },
+  {
+    id: "plank-mode-guide",
+    title: "Plank mode: body-line consistency, not a safety grade",
+    category: "exercise",
+    evidenceLevel: "clinical-boundary",
+    signal:
+      "In a side view, the app compares the visible shoulder–hip–ankle line with the user's calibrated starting line.",
+    claim:
+      "Public-health guidance supports strengthening in general, but it does not validate one plank angle or this app's tolerance. The detector only reports visible line consistency relative to calibration.",
+    actions: [
+      "Use a stable surface and side view with shoulders, hips, and ankles visible.",
+      "Choose a supported variation and duration you can manage without pain or breath-holding.",
+      "Stop when position, footing, or control is no longer comfortable rather than chasing the timer.",
+    ],
+    limitations:
+      "The app cannot assess breathing, internal pressure, load, fatigue, strength, joint symptoms, surface safety, or readiness for exercise.",
+    sourceIds: [
+      "cdc-adult-activity",
+      "who-activity",
+      "single-camera-markerless-review",
+      "nice-low-back",
+    ],
+  },
+  {
     id: "pushup-load-scaling",
-    title: "Push-up depth and body-line scaling",
+    title: "Push-up mode: depth, load, and body-line scaling",
     category: "exercise",
     evidenceLevel: "biomechanics",
     signal: "The body line or elbow range changes during a side-view push-up.",
@@ -533,6 +769,7 @@ export const POSTURE_EVIDENCE = [
     actions: [
       "Keep shoulders, hips, and heels moving as one controllable line.",
       "Use knees-down or a higher support surface to scale load and range when needed.",
+      "Stop if the movement causes pain or you cannot keep the surface and hand position stable.",
     ],
     limitations:
       "These are movement cues, not a diagnosis or a prescription for shoulder, wrist, elbow, or back rehabilitation.",
@@ -540,7 +777,7 @@ export const POSTURE_EVIDENCE = [
   },
   {
     id: "lunge-control",
-    title: "Lunge stance and controlled loading",
+    title: "Lunge mode: stance and controlled loading",
     category: "exercise",
     evidenceLevel: "biomechanics",
     signal:
@@ -554,6 +791,29 @@ export const POSTURE_EVIDENCE = [
     limitations:
       "A single camera view cannot assess joint loading, balance strategy, prior injury, or whether a lunge is appropriate for you.",
     sourceIds: ["lunge-biomechanics", "nice-low-back"],
+  },
+  {
+    id: "curl-mode-guide",
+    title: "Curl mode: elbow consistency, not muscle assessment",
+    category: "exercise",
+    evidenceLevel: "clinical-boundary",
+    signal:
+      "In a front view, the app checks whether the visible elbow drifts substantially relative to the torso during a repetition.",
+    claim:
+      "This app's elbow-distance threshold is an unvalidated consistency heuristic. General strengthening guidance does not establish one correct curl path or let a camera infer muscle activation or training load.",
+    actions: [
+      "Use a stable stance, comfortable load, and front view with shoulders, elbows, and wrists visible.",
+      "Reduce load or range if you need to swing or if the movement causes pain.",
+      "Treat a counted repetition as a local movement event, not proof of training quality.",
+    ],
+    limitations:
+      "The app cannot measure resistance, muscle activation, tendon load, grip, fatigue, pain, strength, or whether curls are appropriate for you.",
+    sourceIds: [
+      "cdc-adult-activity",
+      "who-activity",
+      "single-camera-markerless-review",
+      "nice-low-back",
+    ],
   },
   {
     id: "controlled-exercise",
@@ -588,23 +848,163 @@ export const ISSUE_EVIDENCE_IDS: Record<IssueCode, readonly PostureEvidenceId[]>
   shoulder_imbalance: ["lateral-asymmetry"],
   torso_inclination: ["slouching"],
   prolonged_slouch: ["static-posture", "slouching"],
-  squat_depth: ["comfortable-range"],
-  squat_knee_alignment: ["dynamic-knee-valgus"],
-  plank_alignment: ["controlled-exercise"],
+  squat_depth: ["squat-mode-guide", "comfortable-range"],
+  squat_knee_alignment: ["squat-mode-guide", "dynamic-knee-valgus"],
+  plank_alignment: ["plank-mode-guide"],
   pushup_body_line: ["pushup-load-scaling"],
   pushup_depth: ["pushup-load-scaling", "comfortable-range"],
   lunge_alignment: ["lunge-control"],
-  curl_control: ["controlled-exercise"],
-  positioning: ["neutral-posture"],
+  curl_control: ["curl-mode-guide"],
+  positioning: ["camera-measurement-limits", "calibration-and-confidence"],
+};
+
+export const MODE_GUIDE_EVIDENCE_IDS: Record<AnalysisMode, readonly PostureEvidenceId[]> = {
+  standing: ["standing-alignment", "calibration-and-confidence"],
+  desk: ["desk-setup", "static-posture"],
+  squat: ["squat-mode-guide", "comfortable-range"],
+  plank: ["plank-mode-guide"],
+  pushup: ["pushup-load-scaling"],
+  lunge: ["lunge-control"],
+  curl: ["curl-mode-guide"],
+};
+
+export type ThresholdProvenance = "product-heuristic" | "operational-only";
+
+export interface IssueMeasurementStatus {
+  validationStatus: "unvalidated";
+  thresholdProvenance: ThresholdProvenance;
+  note: string;
+}
+
+const HEURISTIC_MEASUREMENT_NOTE =
+  "This trigger is a product heuristic for repeatable coaching, not a validated clinical cutoff or safety test.";
+
+export const ISSUE_MEASUREMENT_STATUS: Record<IssueCode, IssueMeasurementStatus> = {
+  standing_head_alignment: {
+    validationStatus: "unvalidated",
+    thresholdProvenance: "product-heuristic",
+    note: HEURISTIC_MEASUREMENT_NOTE,
+  },
+  standing_trunk_alignment: {
+    validationStatus: "unvalidated",
+    thresholdProvenance: "product-heuristic",
+    note: HEURISTIC_MEASUREMENT_NOTE,
+  },
+  standing_lateral_asymmetry: {
+    validationStatus: "unvalidated",
+    thresholdProvenance: "product-heuristic",
+    note: HEURISTIC_MEASUREMENT_NOTE,
+  },
+  head_forward: {
+    validationStatus: "unvalidated",
+    thresholdProvenance: "product-heuristic",
+    note: HEURISTIC_MEASUREMENT_NOTE,
+  },
+  neck_inclination: {
+    validationStatus: "unvalidated",
+    thresholdProvenance: "product-heuristic",
+    note: HEURISTIC_MEASUREMENT_NOTE,
+  },
+  shoulder_imbalance: {
+    validationStatus: "unvalidated",
+    thresholdProvenance: "product-heuristic",
+    note: HEURISTIC_MEASUREMENT_NOTE,
+  },
+  torso_inclination: {
+    validationStatus: "unvalidated",
+    thresholdProvenance: "product-heuristic",
+    note: HEURISTIC_MEASUREMENT_NOTE,
+  },
+  prolonged_slouch: {
+    validationStatus: "unvalidated",
+    thresholdProvenance: "product-heuristic",
+    note: HEURISTIC_MEASUREMENT_NOTE,
+  },
+  squat_depth: {
+    validationStatus: "unvalidated",
+    thresholdProvenance: "product-heuristic",
+    note: HEURISTIC_MEASUREMENT_NOTE,
+  },
+  squat_knee_alignment: {
+    validationStatus: "unvalidated",
+    thresholdProvenance: "product-heuristic",
+    note: HEURISTIC_MEASUREMENT_NOTE,
+  },
+  plank_alignment: {
+    validationStatus: "unvalidated",
+    thresholdProvenance: "product-heuristic",
+    note: HEURISTIC_MEASUREMENT_NOTE,
+  },
+  pushup_body_line: {
+    validationStatus: "unvalidated",
+    thresholdProvenance: "product-heuristic",
+    note: HEURISTIC_MEASUREMENT_NOTE,
+  },
+  pushup_depth: {
+    validationStatus: "unvalidated",
+    thresholdProvenance: "product-heuristic",
+    note: HEURISTIC_MEASUREMENT_NOTE,
+  },
+  lunge_alignment: {
+    validationStatus: "unvalidated",
+    thresholdProvenance: "product-heuristic",
+    note: HEURISTIC_MEASUREMENT_NOTE,
+  },
+  curl_control: {
+    validationStatus: "unvalidated",
+    thresholdProvenance: "product-heuristic",
+    note: HEURISTIC_MEASUREMENT_NOTE,
+  },
+  positioning: {
+    validationStatus: "unvalidated",
+    thresholdProvenance: "operational-only",
+    note: "This is a framing and visibility check, not a posture finding or health assessment.",
+  },
 };
 
 export function evidenceIdsForIssue(issueCode: IssueCode): readonly PostureEvidenceId[] {
   return ISSUE_EVIDENCE_IDS[issueCode];
 }
 
+export function evidenceIdsForMode(mode: AnalysisMode): readonly PostureEvidenceId[] {
+  return MODE_GUIDE_EVIDENCE_IDS[mode];
+}
+
+export function measurementStatusForIssue(issueCode: IssueCode): IssueMeasurementStatus {
+  return ISSUE_MEASUREMENT_STATUS[issueCode];
+}
+
 export function evidenceForIds(ids: readonly string[] | undefined): PostureEvidence[] {
   return (ids ?? []).flatMap((id) => {
     const entry = POSTURE_EVIDENCE_BY_ID[id as PostureEvidenceId];
     return entry ? [entry] : [];
+  });
+}
+
+export interface PostureEvidenceQuery {
+  category?: EvidenceCategoryFilter;
+  query?: string;
+}
+
+function normalizeEvidenceQuery(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+export function findPostureEvidence({
+  category = "all",
+  query = "",
+}: PostureEvidenceQuery = {}): PostureEvidence[] {
+  const terms = normalizeEvidenceQuery(query).split(" ").filter(Boolean);
+
+  return POSTURE_EVIDENCE.filter((entry) => {
+    if (category !== "all" && entry.category !== category) return false;
+    if (terms.length === 0) return true;
+
+    const searchableText = normalizeEvidenceQuery(
+      [entry.title, entry.signal, entry.claim, entry.actions.join(" "), entry.limitations].join(
+        " ",
+      ),
+    );
+    return terms.every((term) => searchableText.includes(term));
   });
 }

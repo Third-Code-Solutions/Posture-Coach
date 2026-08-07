@@ -40,6 +40,7 @@ In a second terminal, confirm `http://127.0.0.1:3001/healthz` returns `ok`, then
 ## Product boundaries
 
 - Relaxed standing, desk posture, and five exercise modes are educational coaching cues, not medical advice.
+- The offline Posture Guide makes every cached topic searchable without camera access and shows observable signals, practical options, camera limits, and direct sources.
 - Standing mode calibrates a comfortable full-body baseline, then reports only persistent visible head, trunk, or side-to-side alignment tendencies supported by the selected camera view.
 - The app does not diagnose, promise clinical accuracy, or promise injury prevention.
 - Camera frames, uploaded video, uploaded images, landmarks, and session summaries remain in browser memory. There is no account, backend, analytics, paid AI API, or frame upload.
