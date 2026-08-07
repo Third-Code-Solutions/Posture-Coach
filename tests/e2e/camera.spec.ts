@@ -30,11 +30,135 @@ async function downloadDeviceReport(page: Page) {
       cameraRuntimesByFacing: Record<string, { effectiveWidth: number; effectiveHeight: number }>;
       cameraCleanupConfirmed: boolean | null;
       latestCamera: { effectiveWidth: number; effectiveHeight: number } | null;
-      inference: { totalResults: number; p95LatencyMs: number | null };
+      inference: {
+        engineLabel: string | null;
+        totalResults: number;
+        p95LatencyMs: number | null;
+      };
     };
     checks: Array<{ id: string; status: string }>;
   };
 }
+
+test("warms the local engine while camera permission is pending", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "Dedicated cold-start lifecycle probe.");
+  test.setTimeout(45_000);
+  await page.addInitScript(() => {
+    const testWindow = window as typeof window & {
+      __cameraGateWaiting: boolean;
+      __poseInitPosts: number;
+      __releaseCameraGate: () => void;
+    };
+    testWindow.__cameraGateWaiting = false;
+    testWindow.__poseInitPosts = 0;
+    let releaseCameraGate: () => void = () => {};
+    const cameraGate = new Promise<void>((resolve) => {
+      releaseCameraGate = resolve;
+    });
+    testWindow.__releaseCameraGate = releaseCameraGate;
+
+    const originalGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    Object.defineProperty(navigator.mediaDevices, "getUserMedia", {
+      configurable: true,
+      value: async (constraints: MediaStreamConstraints) => {
+        testWindow.__cameraGateWaiting = true;
+        await cameraGate;
+        return originalGetUserMedia(constraints);
+      },
+    });
+
+    const originalPostMessage = Worker.prototype.postMessage;
+    Worker.prototype.postMessage = function postMessage(
+      message: unknown,
+      transferOrOptions?: Transferable[] | StructuredSerializeOptions,
+    ) {
+      if ((message as { type?: string } | null)?.type === "init") {
+        testWindow.__poseInitPosts += 1;
+      }
+      Reflect.apply(originalPostMessage, this, [message, transferOrOptions]);
+    };
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Use webcam" }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as typeof window & { __cameraGateWaiting: boolean }).__cameraGateWaiting,
+      ),
+    )
+    .toBe(true);
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as typeof window & { __poseInitPosts: number }).__poseInitPosts),
+    )
+    .toBeGreaterThan(0);
+  await expect(page.getByText(/Pose Landmarker Full.*local/i)).toBeVisible({ timeout: 20_000 });
+
+  const releasedAt = Date.now();
+  await page.evaluate(() =>
+    (window as typeof window & { __releaseCameraGate: () => void }).__releaseCameraGate(),
+  );
+  await expect(page.getByText(/camera.*processing on device/i)).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(/\d+ms live/i)).toBeVisible({ timeout: 2_000 });
+  expect(Date.now() - releasedAt).toBeLessThan(2_000);
+
+  await page.locator(".device-readiness summary").click();
+  await page.getByRole("button", { name: "Stop session" }).click();
+  const report = await downloadDeviceReport(page);
+  expect(report.session.inference.engineLabel).toMatch(/Pose Landmarker Full.*local/i);
+});
+
+test("releases a warming engine after camera permission is denied", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "chromium", "Dedicated denied-permission cleanup probe.");
+  await page.addInitScript(() => {
+    const testWindow = window as typeof window & {
+      __poseInitPosts: number;
+      __terminatedPoseWorkers: number;
+    };
+    testWindow.__poseInitPosts = 0;
+    testWindow.__terminatedPoseWorkers = 0;
+    Object.defineProperty(navigator.mediaDevices, "getUserMedia", {
+      configurable: true,
+      value: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        throw new DOMException("Permission denied by test", "NotAllowedError");
+      },
+    });
+    const originalPostMessage = Worker.prototype.postMessage;
+    Worker.prototype.postMessage = function postMessage(
+      message: unknown,
+      transferOrOptions?: Transferable[] | StructuredSerializeOptions,
+    ) {
+      if ((message as { type?: string } | null)?.type === "init") {
+        testWindow.__poseInitPosts += 1;
+      }
+      Reflect.apply(originalPostMessage, this, [message, transferOrOptions]);
+    };
+    const originalTerminate = Worker.prototype.terminate;
+    Worker.prototype.terminate = function terminate() {
+      testWindow.__terminatedPoseWorkers += 1;
+      originalTerminate.call(this);
+    };
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Use webcam" }).click();
+  await expect(page.getByText(/Camera permission was declined/i)).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as typeof window & { __poseInitPosts: number }).__poseInitPosts),
+    )
+    .toBeGreaterThan(0);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as typeof window & { __terminatedPoseWorkers: number }).__terminatedPoseWorkers,
+      ),
+    )
+    .toBeGreaterThan(0);
+});
 
 test("analyzes a fake webcam stream locally", async ({ page, browserName }, testInfo) => {
   await page.addInitScript(() => {
@@ -51,6 +175,7 @@ test("analyzes a fake webcam stream locally", async ({ page, browserName }, test
     const stoppedTracks: MediaStreamTrack[] = [];
     Object.defineProperty(window, "__testWakeLocks", { value: sentinels });
     Object.defineProperty(window, "__stoppedCameraTracks", { value: stoppedTracks });
+    Object.defineProperty(window, "__poseWorkerInitPosts", { value: 0, writable: true });
     Object.defineProperty(window, "__terminatedPoseWorkers", { value: 0, writable: true });
     const originalStop = MediaStreamTrack.prototype.stop;
     MediaStreamTrack.prototype.stop = function stop() {
@@ -58,6 +183,17 @@ test("analyzes a fake webcam stream locally", async ({ page, browserName }, test
       originalStop.call(this);
     };
     const originalTerminate = Worker.prototype.terminate;
+    const originalPostMessage = Worker.prototype.postMessage;
+    Worker.prototype.postMessage = function postMessage(
+      message: unknown,
+      transferOrOptions?: Transferable[] | StructuredSerializeOptions,
+    ) {
+      if ((message as { type?: string } | null)?.type === "init") {
+        const testWindow = window as typeof window & { __poseWorkerInitPosts: number };
+        testWindow.__poseWorkerInitPosts += 1;
+      }
+      Reflect.apply(originalPostMessage, this, [message, transferOrOptions]);
+    };
     Worker.prototype.terminate = function terminate() {
       const testWindow = window as typeof window & { __terminatedPoseWorkers: number };
       testWindow.__terminatedPoseWorkers += 1;
@@ -107,6 +243,9 @@ test("analyzes a fake webcam stream locally", async ({ page, browserName }, test
   });
   await expect(page.getByText(/System released the wake lock/i)).toBeVisible();
   if (browserName === "chromium") {
+    const initPostsBeforeSwitch = await page.evaluate(
+      () => (window as typeof window & { __poseWorkerInitPosts: number }).__poseWorkerInitPosts,
+    );
     await page.locator("video").evaluate((video) => {
       (window as typeof window & { __previousCameraStream?: MediaStream }).__previousCameraStream =
         (video as HTMLVideoElement).srcObject as MediaStream;
@@ -150,6 +289,13 @@ test("analyzes a fake webcam stream locally", async ({ page, browserName }, test
     await expect(page.getByText(/Rear camera.*source.*effective/i)).toBeVisible({
       timeout: 15_000,
     });
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => (window as typeof window & { __poseWorkerInitPosts: number }).__poseWorkerInitPosts,
+        ),
+      )
+      .toBe(initPostsBeforeSwitch);
     await expect(page.getByText(/Screen wake lock active/i)).toBeVisible();
     if (testInfo.project.name === "chromium") {
       // The deterministic camera fixture is a one-leg balance pose. Use desk
@@ -223,12 +369,18 @@ test("analyzes a fake webcam stream locally", async ({ page, browserName }, test
         }),
       )
       .toBe(true);
-    expect(
-      await page.evaluate(
-        () =>
-          (window as typeof window & { __terminatedPoseWorkers: number }).__terminatedPoseWorkers,
-      ),
-    ).toBeGreaterThanOrEqual(5);
+    const workerLifecycle = await page.evaluate(() => {
+      const testWindow = window as typeof window & {
+        __poseWorkerInitPosts: number;
+        __terminatedPoseWorkers: number;
+      };
+      return {
+        initialized: testWindow.__poseWorkerInitPosts,
+        terminated: testWindow.__terminatedPoseWorkers,
+      };
+    });
+    expect(workerLifecycle.initialized).toBeGreaterThanOrEqual(4);
+    expect(workerLifecycle.terminated).toBe(workerLifecycle.initialized);
   }
   const report = await downloadDeviceReport(page);
   expect(report.privacy).toEqual({

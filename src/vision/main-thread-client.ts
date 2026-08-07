@@ -2,6 +2,7 @@ import type { PoseDetector } from "@tensorflow-models/pose-detection/dist/pose_d
 import { MEASUREMENT_THRESHOLDS } from "../domain/measurement-registry";
 import type { PoseInferenceClient, PoseInferenceClientOptions } from "./inference-client";
 import { createTfjsPoseDetector, serializeTfjsPose } from "./tfjs-runtime";
+import { warmTfjsPoseDetector } from "./warmup";
 
 const MAIN_THREAD_RUNTIME_REVISION = "2026-08-07-webkit-compatibility";
 
@@ -54,10 +55,15 @@ export class PoseMainThreadClient implements PoseInferenceClient {
     if (this.detector) return this.detector;
     if (!this.initializationPromise) {
       this.initializationPromise = createTfjsPoseDetector(window.location.origin)
-        .then((detector) => {
+        .then(async (detector) => {
           if (this.disposed) {
             detector.dispose();
             throw new Error("Pose runtime was disposed during initialization.");
+          }
+          await warmTfjsPoseDetector(detector);
+          if (this.disposed) {
+            detector.dispose();
+            throw new Error("Pose runtime was disposed during warm-up.");
           }
           this.detector = detector;
           return detector;

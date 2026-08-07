@@ -273,6 +273,7 @@ export function CoachApp() {
   const streamRef = useRef<MediaStream | null>(null);
   const objectUrlRef = useRef<string | null>(null);
   const workerRef = useRef<PoseInferenceClient | null>(null);
+  const localEngineLabelRef = useRef<string | null>(null);
   const engineRef = useRef(new PostureEngine());
   const calibrationRef = useRef<CalibrationWindow | null>(null);
   const animationRef = useRef<number | null>(null);
@@ -379,6 +380,7 @@ export function CoachApp() {
       const model =
         message.model === "blazepose_tfjs_full" ? "BlazePose Full" : "Pose Landmarker Full";
       const label = `${model}${delegate ? ` · ${delegate}` : ""} · local`;
+      localEngineLabelRef.current = label;
       if (sourceKindRef.current === "camera") {
         deviceDiagnosticsRef.current.recordEngineLabel(label);
       }
@@ -390,6 +392,12 @@ export function CoachApp() {
       setWorkerLabel("Local pose engine unavailable");
       setError(`${message.message} Nothing was sent off this device.`);
       setSourceState("error");
+      return;
+    }
+    if (
+      sourceKindRef.current !== "image" &&
+      !framePipelineStartedAtRef.current.has(message.sequence)
+    ) {
       return;
     }
     const observation = createObservation({
@@ -574,6 +582,7 @@ export function CoachApp() {
     sourceEpochRef.current += 1;
     workerRef.current?.dispose();
     workerRef.current = null;
+    localEngineLabelRef.current = null;
     lastVideoTimeRef.current = -1;
     lastPreviewVideoTimeRef.current = -1;
     lastSubmittedTimestampRef.current = -1;
@@ -582,6 +591,9 @@ export function CoachApp() {
     adaptiveInferenceRef.current.clearSamples();
     visualSmootherRef.current.reset();
     setTrackingLatencyMs(null);
+    setWorkerLabel(
+      processingRef.current ? "Loading local pose engine…" : "Local pose engine ready on demand",
+    );
     if (processingRef.current) ensureWorker();
   }
 
@@ -946,8 +958,11 @@ export function CoachApp() {
       };
       processingRef.current = true;
       setSourceState("active");
-      setWorkerLabel("Loading local pose engine…");
+      if (!localEngineLabelRef.current) setWorkerLabel("Loading local pose engine…");
       ensureWorker();
+      if (token.kind === "camera" && localEngineLabelRef.current) {
+        deviceDiagnosticsRef.current.recordEngineLabel(localEngineLabelRef.current);
+      }
       if (!sessionStartedRef.current) {
         const startedAt = performance.now();
         sessionStartedRef.current = startedAt;
@@ -1006,7 +1021,8 @@ export function CoachApp() {
 
   const startCamera = async (requestedFacing = cameraFacingRef.current) => {
     setError(null);
-    cleanupSession(false);
+    const preserveInference = sourceKindRef.current === "camera" && workerRef.current !== null;
+    cleanupSession(false, preserveInference);
     primeForCameraAction();
     deviceDiagnosticsRef.current.recordCameraRequest();
     cameraFacingRef.current = requestedFacing;
@@ -1030,6 +1046,8 @@ export function CoachApp() {
     const sourceEpoch = sourceEpochRef.current;
     let permissionRecorded = false;
     try {
+      if (!localEngineLabelRef.current) setWorkerLabel("Loading local pose engine…");
+      ensureWorker();
       if (shouldUsePortraitTransform()) {
         const orientation = window.screen?.orientation as
           | (ScreenOrientation & {
@@ -1165,6 +1183,7 @@ export function CoachApp() {
         );
       }
       cleanupSession(false);
+      setWorkerLabel("Local pose engine ready on demand");
       setSourceState("error");
       setError(
         name === "NotAllowedError"
@@ -1266,15 +1285,18 @@ export function CoachApp() {
     video.load();
   };
 
-  function finishSession(nextState: "idle" | "complete" = "idle") {
-    sourceEpochRef.current += 1;
+  function finishSession(nextState: "idle" | "complete" = "idle", preserveInference = false) {
+    if (!preserveInference) sourceEpochRef.current += 1;
     stopSessionAssistance();
     processingRef.current = false;
     calibratingRef.current = false;
     setCalibrating(false);
     stopFrameLoop();
-    workerRef.current?.dispose();
-    workerRef.current = null;
+    if (!preserveInference) {
+      workerRef.current?.dispose();
+      workerRef.current = null;
+      localEngineLabelRef.current = null;
+    }
     const tracker = sessionTrackerRef.current;
     if (tracker && sessionStartedRef.current !== null) {
       const summary = tracker.end(performance.now());
@@ -1480,8 +1502,8 @@ export function CoachApp() {
     startGuidedSetupForCamera();
   };
 
-  function cleanupSession(resetSource = true) {
-    finishSession("idle");
+  function cleanupSession(resetSource = true, preserveInference = false) {
+    finishSession("idle", preserveInference);
     calibratingRef.current = false;
     calibrationStableRef.current = false;
     calibrationRef.current = null;
@@ -1503,7 +1525,7 @@ export function CoachApp() {
     lastPreviewVideoTimeRef.current = -1;
     lastSubmittedTimestampRef.current = -1;
     frameCaptureFailureRef.current = false;
-    sequenceRef.current = 0;
+    if (!preserveInference) sequenceRef.current = 0;
     visualSmootherRef.current.reset();
     setInferenceQuality(adaptiveInferenceRef.current.reset());
     setTrackingLatencyMs(null);

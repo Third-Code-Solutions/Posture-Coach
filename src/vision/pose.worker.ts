@@ -5,6 +5,7 @@ import type { PoseWorkerRequest, PoseWorkerResponse } from "./protocol";
 import { MEASUREMENT_THRESHOLDS } from "../domain/measurement-registry";
 import { selectPoseDelegate, type PoseDelegate } from "./delegate";
 import { createTfjsPoseDetector, serializeTfjsPose } from "./tfjs-runtime";
+import { createOpaquePoseWarmupFrame, warmTfjsPoseDetector } from "./warmup";
 
 const nativeFetch = globalThis.fetch.bind(globalThis);
 const LOCAL_WORKER_RUNTIME_REVISION = "2026-08-08-webkit-pixel-worker";
@@ -101,6 +102,20 @@ async function createCpuDetector(): Promise<PoseDetector> {
   return createTfjsPoseDetector(self.location.origin);
 }
 
+async function warmActiveModel(): Promise<void> {
+  if (cpuDetector) {
+    await warmTfjsPoseDetector(cpuDetector);
+    return;
+  }
+  if (!landmarker) return;
+  try {
+    const result = landmarker.detectForVideo(createOpaquePoseWarmupFrame(), 0);
+    result.close();
+  } catch {
+    // Some browser delegates reject synthetic frames. First real frame can warm them.
+  }
+}
+
 function emitResult(result: PoseLandmarkerResult, timestampMs: number, sequence: number): void {
   const landmarks = result.landmarks[0] ?? [];
   const worldLandmarks = result.worldLandmarks[0] ?? [];
@@ -162,6 +177,7 @@ workerScope.onmessage = async (event) => {
     try {
       selectedDelegate = selectPoseDelegate(request.webgl2Available, request.webglAvailable);
       await createLandmarker();
+      await warmActiveModel();
       workerScope.postMessage({
         type: "ready",
         model: activeModel,
