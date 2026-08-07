@@ -44,6 +44,7 @@ async function expectStatus(pathname, expectedStatus) {
 }
 
 await assertFile(resolve(projectRoot, "out/index.html"));
+await assertFile(resolve(projectRoot, "out/manifest.webmanifest"));
 await assertFile(resolve(projectRoot, "out/models/pose_landmarker_full.task"));
 await assertFile(resolve(projectRoot, "out/wasm/vision_wasm_internal.wasm"));
 
@@ -64,6 +65,15 @@ try {
   const rootBody = await rootResponse.text();
   if (!rootBody.includes("Third Code Posture")) {
     throw new Error("Root response does not contain the application title");
+  }
+
+  const manifestResponse = await expectStatus("/manifest.webmanifest", 200);
+  if (manifestResponse.headers.get("content-type")?.split(";")[0] !== "application/manifest+json") {
+    throw new Error("Manifest content type is not application/manifest+json");
+  }
+  const manifest = await manifestResponse.json();
+  if (manifest.name !== "Third Code Posture" || manifest.display !== "standalone") {
+    throw new Error("Manifest does not contain the installable Third Code Posture identity");
   }
   for (const header of [
     "content-security-policy",

@@ -4,3 +4,4 @@ export * from "./landmark-adapter";
 export * from "./media";
 export * from "./camera";
 export * from "./delegate";
+export * from "./capabilities";

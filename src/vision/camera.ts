@@ -4,6 +4,22 @@ export interface CaptureViewport {
 }
 
 export const PORTRAIT_CAMERA_ASPECT_RATIO = 9 / 16;
+export const MAX_INFERENCE_FRAME_DIMENSION = 720;
+
+export interface FrameDimensions {
+  width: number;
+  height: number;
+}
+
+export interface CameraRuntimeInfo {
+  rawWidth: number;
+  rawHeight: number;
+  effectiveWidth: number;
+  effectiveHeight: number;
+  rotatedLocally: boolean;
+  facingMode: string | null;
+  frameRate: number | null;
+}
 
 export function isCompactCaptureViewport(viewport: CaptureViewport): boolean {
   const width = Number.isFinite(viewport.width) ? Math.max(0, viewport.width) : 0;
@@ -47,6 +63,28 @@ export function getCameraConstraints(viewport: CaptureViewport): MediaStreamCons
 
 export function isPortraitFrame(width: number, height: number): boolean {
   return Number.isFinite(width) && Number.isFinite(height) && width > 0 && height >= width;
+}
+
+export function getInferenceFrameDimensions(
+  width: number,
+  height: number,
+  maxDimension = MAX_INFERENCE_FRAME_DIMENSION,
+): FrameDimensions {
+  if (
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width <= 0 ||
+    height <= 0 ||
+    !Number.isFinite(maxDimension) ||
+    maxDimension <= 0
+  ) {
+    return { width: 0, height: 0 };
+  }
+  const scale = Math.min(1, maxDimension / Math.max(width, height));
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  };
 }
 
 export async function preferPortraitTrack(track: MediaStreamTrack): Promise<boolean> {

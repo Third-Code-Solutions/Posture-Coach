@@ -15,6 +15,7 @@ export default defineConfig([
   ...tseslint.configs.recommended,
   globalIgnores([
     ".next/**",
+    ".next-*/**",
     "next-env.d.ts",
     "out/**",
     "node_modules/**",

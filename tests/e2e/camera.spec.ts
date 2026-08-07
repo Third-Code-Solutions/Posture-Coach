@@ -52,6 +52,8 @@ test.describe("mobile portrait camera", () => {
     await expect(page.locator(".portrait-preview-canvas")).toHaveClass(/is-visible/, {
       timeout: 15_000,
     });
+    await page.locator(".device-readiness summary").click();
+    await expect(page.getByText(/source, .*effective.*rotated locally/i)).toBeVisible();
 
     const geometry = await page.evaluate(() => {
       const video = document.querySelector("video");

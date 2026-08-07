@@ -9,7 +9,7 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-Open `http://localhost:3000`. Camera access requires a secure context (`localhost` is allowed) and an explicit click. Uploaded videos and still images are read through local object URLs and revoked when the session stops.
+Open `http://localhost:3000`. Camera access requires a secure context (`localhost` is allowed) and an explicit click. Uploaded videos and still images are read through local object URLs and revoked when the session stops. On phones, keep device upright; if browser returns landscape frames, app rotates them locally before preview and inference.
 
 Quality gates:
 
@@ -35,7 +35,7 @@ docker build -t posture-coach:local .
 docker run --rm -p 3001:3000 posture-coach:local
 ```
 
-In a second terminal, confirm `http://127.0.0.1:3001/healthz` returns `ok`, then open `http://127.0.0.1:3001/`. Deployment has not been run. See [docs/deployment.md](docs/deployment.md) for provider setup and release gates.
+In a second terminal, confirm `http://127.0.0.1:3001/healthz` returns `ok`, then open `http://127.0.0.1:3001/`. See [docs/deployment.md](docs/deployment.md) for provider setup and release gates.
 
 ## Product boundaries
 
@@ -45,10 +45,12 @@ In a second terminal, confirm `http://127.0.0.1:3001/healthz` returns `ok`, then
 - Camera frames, uploaded video, uploaded images, landmarks, and session summaries remain in browser memory. There is no account, backend, analytics, paid AI API, or frame upload.
 - Still images run one local pose pass and show the landmark overlay. Movement coaching and repetition counts require a webcam or video sequence.
 - Evaluation abstains when required landmarks are missing, confidence is low, the view is unsupported, or calibration is not stable.
+- Inference frames are capped at 720px on the longest edge to reduce transfer and CPU/GPU pressure on phones; displayed preview keeps full source framing.
+- The device-readiness panel reports secure context, camera API, worker/ImageBitmap/WebAssembly support, and GPU/WASM fallback status without sending telemetry.
 - Stop if you feel pain. Seek qualified professional help for injury, pain, or rehabilitation.
 
 ## Technical notes
 
 The MediaPipe Pose Landmarker runs in a dedicated worker using the pinned Full model and same-origin Wasm assets. The pure domain engine owns normalization, confidence gating, smoothing, calibration, geometry, movement phases, deterministic feedback, and summaries; React only presents snapshots.
 
-See [docs/architecture.md](docs/architecture.md), [docs/licensing.md](docs/licensing.md), and [tasks/plan.md](tasks/plan.md).
+See [docs/architecture.md](docs/architecture.md), [docs/licensing.md](docs/licensing.md), [docs/production-readiness.md](docs/production-readiness.md), and [tasks/plan.md](tasks/plan.md).

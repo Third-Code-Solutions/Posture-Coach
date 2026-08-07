@@ -34,6 +34,8 @@ The evaluator uses required-landmark gates, camera-view declarations, calibratio
 
 The current browser surface shows one cue at a time, keeps camera activation behind a user action, and disposes tracks, workers, callbacks, object URLs, and transferred frames on session exit.
 
+Camera constraints prefer portrait dimensions. When a compact or touch device still reports a landscape camera track, the client rotates frames into a portrait canvas locally before both preview and inference. Inference bitmaps are capped at 720px on the longest edge to reduce mobile transfer and compute pressure; normalized landmark geometry remains aligned to the effective portrait source dimensions.
+
 Standing mode is a separate stationary evaluator. It requires head-to-ankle landmarks, calibrates a relaxed full-body baseline, and uses side-view head/trunk geometry plus front-view shoulder/hip geometry only when the selected view supports that signal. A steady result means the visible landmarks are close to that baseline; it is not a clinical normal/abnormal judgment.
 
 The worker also short-circuits the optional ODML telemetry request bundled by the MediaPipe runtime. The model and Wasm load from the app origin; runtime network validation showed only same-origin assets and the local upload object URL.

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { FeedbackCard } from "../feedback/FeedbackCard";
 import { ModeSelector } from "../controls/ModeSelector";
+import { DeviceReadiness } from "./DeviceReadiness";
 import { PoseCanvas } from "../overlay/PoseCanvas";
 import {
   AnalysisMode,
@@ -24,8 +25,10 @@ import {
   MIN_OBSERVED_VIEW_CONFIDENCE,
 } from "../../src/domain";
 import {
+  type CameraRuntimeInfo,
   createObservation,
   getCameraConstraints,
+  getInferenceFrameDimensions,
   getPortraitFallbackVideoConstraints,
   getLocalMediaKind,
   isCompactCaptureViewport,
@@ -232,6 +235,8 @@ export function CoachApp() {
   const [imageStatus, setImageStatus] = useState<ImageStatus | null>(null);
   const [portraitCapture, setPortraitCapture] = useState<boolean | null>(null);
   const [portraitTransformActive, setPortraitTransformActive] = useState(false);
+  const [cameraRuntime, setCameraRuntime] = useState<CameraRuntimeInfo | null>(null);
+  const [cameraMuted, setCameraMuted] = useState(false);
   const [trackingLatencyMs, setTrackingLatencyMs] = useState<number | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -247,6 +252,7 @@ export function CoachApp() {
   const frameCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const portraitPreviewCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const portraitTransformRef = useRef(false);
+  const cameraTrackSettingsRef = useRef<MediaTrackSettings | null>(null);
   const directBitmapSupportRef = useRef<{ video: boolean | null; image: boolean | null }>({
     video: null,
     image: null,
@@ -466,6 +472,18 @@ export function CoachApp() {
     const effectiveHeight = rotateLandscapeCamera ? width : height;
     setSourceSize({ width: effectiveWidth, height: effectiveHeight });
     setPortraitCapture(isPortraitFrame(effectiveWidth, effectiveHeight));
+    if (sourceKindRef.current === "camera") {
+      const settings = cameraTrackSettingsRef.current;
+      setCameraRuntime({
+        rawWidth: width,
+        rawHeight: height,
+        effectiveWidth,
+        effectiveHeight,
+        rotatedLocally: rotateLandscapeCamera,
+        facingMode: settings?.facingMode ?? null,
+        frameRate: settings?.frameRate ?? null,
+      });
+    }
     if (rotateLandscapeCamera) {
       const canvas = portraitPreviewCanvasRef.current;
       if (canvas && (canvas.width !== effectiveWidth || canvas.height !== effectiveHeight)) {
@@ -503,7 +521,19 @@ export function CoachApp() {
     if (typeof createImageBitmap !== "function") {
       throw new Error("ImageBitmap capture is unavailable in this browser.");
     }
-    return createImageBitmap(drawPortraitFrame(video));
+    const canvas = drawPortraitFrame(video);
+    const dimensions = getInferenceFrameDimensions(canvas.width, canvas.height);
+    try {
+      return await createImageBitmap(canvas, {
+        resizeWidth: dimensions.width,
+        resizeHeight: dimensions.height,
+        resizeQuality: "high",
+      });
+    } catch {
+      // Older Safari builds may not implement resize options. Keep local
+      // capture working at source resolution when that option is unavailable.
+      return createImageBitmap(canvas);
+    }
   };
 
   const captureBitmap = async (
@@ -512,9 +542,14 @@ export function CoachApp() {
     height: number,
     kind: "video" | "image",
   ): Promise<ImageBitmap> => {
+    const dimensions = getInferenceFrameDimensions(width, height);
     if (typeof createImageBitmap === "function" && directBitmapSupportRef.current[kind] !== false) {
       try {
-        const frame = await createImageBitmap(source);
+        const frame = await createImageBitmap(source, {
+          resizeWidth: dimensions.width,
+          resizeHeight: dimensions.height,
+          resizeQuality: "high",
+        });
         directBitmapSupportRef.current[kind] = true;
         return frame;
       } catch {
@@ -534,13 +569,13 @@ export function CoachApp() {
       canvas = document.createElement("canvas");
       frameCanvasRef.current = canvas;
     }
-    if (canvas.width !== width || canvas.height !== height) {
-      canvas.width = width;
-      canvas.height = height;
+    if (canvas.width !== dimensions.width || canvas.height !== dimensions.height) {
+      canvas.width = dimensions.width;
+      canvas.height = dimensions.height;
     }
     const context = canvas.getContext("2d", { alpha: false });
     if (!context) throw new Error("The browser could not create a camera frame canvas.");
-    context.drawImage(source, 0, 0, width, height);
+    context.drawImage(source, 0, 0, dimensions.width, dimensions.height);
     return createImageBitmap(canvas);
   };
 
@@ -788,6 +823,7 @@ export function CoachApp() {
       }
       streamRef.current = stream;
       sourceKindRef.current = "camera";
+      setCameraMuted(false);
       const sourceToken: VideoSourceToken = { kind: "camera", stream };
       sourceTokenRef.current = sourceToken;
       setSourceKind("camera");
@@ -797,15 +833,40 @@ export function CoachApp() {
         setSourceState("error");
         setError("The camera stopped. You can reconnect it or continue with a local video file.");
       };
-      const detachTrackListeners = () => {
-        stream.getTracks().forEach((track) => track.removeEventListener("ended", handleTrackEnded));
+      const handleTrackMuted = () => {
+        if (streamRef.current !== stream) return;
+        setCameraMuted(true);
+        setError(
+          "The camera feed is temporarily paused. Keep this tab visible or reconnect the camera.",
+        );
       };
-      stream.getTracks().forEach((track) => track.addEventListener("ended", handleTrackEnded));
+      const handleTrackUnmuted = () => {
+        if (streamRef.current !== stream) return;
+        setCameraMuted(false);
+        setError((current) =>
+          current?.startsWith("The camera feed is temporarily paused") ? null : current,
+        );
+      };
+      const detachTrackListeners = () => {
+        stream.getTracks().forEach((track) => {
+          track.removeEventListener("ended", handleTrackEnded);
+          track.removeEventListener("mute", handleTrackMuted);
+          track.removeEventListener("unmute", handleTrackUnmuted);
+        });
+      };
+      stream.getTracks().forEach((track) => {
+        track.addEventListener("ended", handleTrackEnded);
+        track.addEventListener("mute", handleTrackMuted);
+        track.addEventListener("unmute", handleTrackUnmuted);
+      });
       cameraTrackCleanupRef.current = detachTrackListeners;
       const video = videoRef.current;
       if (!video) throw new Error("Preview is not ready.");
       const videoTrack = stream.getVideoTracks()[0];
-      if (videoTrack) await preferPortraitTrack(videoTrack);
+      if (videoTrack) {
+        await preferPortraitTrack(videoTrack);
+        cameraTrackSettingsRef.current = videoTrack.getSettings();
+      }
       video.srcObject = stream;
       video.autoplay = true;
       video.muted = true;
@@ -958,6 +1019,7 @@ export function CoachApp() {
     }
     sourceTokenRef.current = null;
     sourceKindRef.current = null;
+    cameraTrackSettingsRef.current = null;
     setSourceKind(null);
     setLandmarks(null);
     setImageStatus(null);
@@ -965,6 +1027,8 @@ export function CoachApp() {
     setPortraitCapture(null);
     portraitTransformRef.current = false;
     setPortraitTransformActive(false);
+    setCameraRuntime(null);
+    setCameraMuted(false);
     const portraitCanvas = portraitPreviewCanvasRef.current;
     if (portraitCanvas) {
       const context = portraitCanvas.getContext("2d");
@@ -1253,13 +1317,15 @@ export function CoachApp() {
                             ? "image · no pose found"
                             : "image · analyzing on device"
                         : sourceKind === "camera"
-                          ? portraitTransformActive
-                            ? "camera · portrait · rotated locally · processing on device"
-                            : portraitCapture === false
-                              ? "camera · landscape · processing on device"
-                              : portraitCapture === true
-                                ? "camera · portrait · processing on device"
-                                : "camera · portrait request · processing on device"
+                          ? cameraMuted
+                            ? "camera · paused · processing on device"
+                            : portraitTransformActive
+                              ? "camera · portrait · rotated locally · processing on device"
+                              : portraitCapture === false
+                                ? "camera · landscape · processing on device"
+                                : portraitCapture === true
+                                  ? "camera · portrait · processing on device"
+                                  : "camera · portrait request · processing on device"
                           : `${sourceKind} · processing on device`
                     : "preview idle"}
                 </span>
@@ -1381,6 +1447,7 @@ export function CoachApp() {
                   </button>
                 )}
               </div>
+              <DeviceReadiness cameraRuntime={cameraRuntime} cameraMuted={cameraMuted} />
             </aside>
           </div>
 

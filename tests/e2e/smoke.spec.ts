@@ -21,6 +21,13 @@ test.describe("privacy-first posture coach smoke", () => {
     await expect(
       page.getByRole("heading", { name: /Posture practice, with signal/ }),
     ).toBeVisible();
+    await expect(page.getByText("Device readiness", { exact: true })).toBeVisible();
+    const manifest = await page.request.get("/manifest.webmanifest");
+    expect(manifest.status()).toBe(200);
+    await expect(manifest.json()).resolves.toMatchObject({
+      name: "Third Code Posture",
+      display: "standalone",
+    });
     const practiceModes = page.getByRole("listbox", { name: "Practice mode" });
     await expect(practiceModes.getByRole("option")).toHaveCount(7);
     await expect(page.getByText(/Standing posture \/ Local worker ready on demand/)).toBeVisible();

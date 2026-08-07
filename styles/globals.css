@@ -81,7 +81,41 @@ label:has(input:focus-visible) {
 .page-shell {
   width: min(100% - 2.5rem, 1440px);
   margin: 0 auto;
-  padding: 1.25rem 0 3rem;
+  padding: max(1.25rem, env(safe-area-inset-top)) max(0px, env(safe-area-inset-right))
+    max(3rem, env(safe-area-inset-bottom));
+}
+
+.error-shell {
+  display: grid;
+  width: min(100% - 2.5rem, 38rem);
+  min-height: 100svh;
+  align-content: center;
+  gap: 1rem;
+  margin: 0 auto;
+  padding: 2rem 0;
+}
+
+.error-shell h1 {
+  max-width: 12ch;
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(2.8rem, 8vw, 5rem);
+  font-weight: 400;
+  letter-spacing: -0.07em;
+  line-height: 0.95;
+}
+
+.error-shell p {
+  max-width: 34rem;
+  margin: 0;
+  color: var(--ink-muted);
+  line-height: 1.65;
+}
+
+.error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
 }
 
 .topbar {
@@ -583,6 +617,87 @@ label:has(input:focus-visible) {
   display: grid;
   gap: 0.45rem;
   margin-top: auto;
+}
+
+.device-readiness {
+  border-top: 1px solid var(--line);
+  padding-top: 0.8rem;
+}
+
+.device-readiness summary {
+  cursor: pointer;
+  color: var(--green-dark);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.readiness-list {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.7rem;
+}
+
+.readiness-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  gap: 0.55rem;
+  padding: 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: white;
+}
+
+.readiness-state {
+  min-width: 3.1rem;
+  padding: 0.2rem 0.3rem;
+  border-radius: 999px;
+  font-size: 0.56rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.readiness-state.is-ready {
+  background: var(--green-soft);
+  color: var(--green-dark);
+}
+
+.readiness-state.is-warning {
+  background: var(--orange-soft);
+  color: #8b4827;
+}
+
+.readiness-row strong,
+.readiness-row small {
+  display: block;
+}
+
+.readiness-row strong {
+  color: var(--ink);
+  font-size: 0.67rem;
+}
+
+.readiness-row small,
+.readiness-loading,
+.readiness-footnote {
+  color: var(--ink-muted);
+  font-size: 0.64rem;
+  line-height: 1.45;
+}
+
+.readiness-row small {
+  margin-top: 0.12rem;
+}
+
+.readiness-loading {
+  margin: 0.65rem 0 0;
+}
+
+.readiness-footnote {
+  margin: 0.7rem 0 0;
 }
 
 .button-primary,

@@ -62,4 +62,4 @@ If `docker build` reports `HCS_E_HYPERV_NOT_INSTALLED`, enable CPU virtualizatio
 
 Also verify the deployed origin in a real browser: model and Wasm requests are same-origin, no camera/video/image/frame/landmark/session request leaves the browser, image upload shows a landmark overlay, denied-camera fallback remains actionable, and `/healthz` is `200` on Railway.
 
-No deployment, provider login, project linking, commit, or push was performed during this readiness pass.
+Production release is linked to Vercel project `thirdcode-posture`. Verify current release identity from Git and live client chunk before claiming readiness; automated browser checks cannot replace representative physical iOS/Android camera checks.
