@@ -9,3 +9,4 @@ export * from "./inference-client";
 export * from "./main-thread-client";
 export * from "./resilient-inference-client";
 export * from "./adaptive-inference";
+export * from "./device-diagnostics";

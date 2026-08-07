@@ -1,4 +1,5 @@
 import path from "node:path";
+import { readFile } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 
 function captureBrowserFaults(page: Page) {
@@ -15,6 +16,26 @@ function captureBrowserFaults(page: Page) {
 
 function poseVideoFixture(): string {
   return path.resolve("output/playwright/fixtures/pose-20s.mp4");
+}
+
+async function downloadDeviceReport(page: Page) {
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download device report" }).click();
+  const download = await downloadPromise;
+  const reportPath = await download.path();
+  if (!reportPath) throw new Error("Device report download did not produce a local file.");
+  return JSON.parse(await readFile(reportPath, "utf8")) as {
+    schemaVersion: number;
+    product: string;
+    privacy: Record<string, boolean>;
+    session: {
+      cameraPermission: string;
+      cameraPermissionOutcomes: { granted: number; denied: number; unavailable: number };
+      cameraStarts: number;
+      inference: { totalResults: number };
+    };
+    checks: Array<{ id: string; status: string }>;
+  };
 }
 
 async function installWakeLockMock(page: Page): Promise<void> {
@@ -72,6 +93,23 @@ test.describe("privacy-first posture coach smoke", () => {
           : "Dedicated worker, ImageBitmap, and WebAssembly available",
       ),
     ).toBeVisible();
+    const report = await downloadDeviceReport(page);
+    expect(report).toMatchObject({
+      schemaVersion: 1,
+      product: "Third Code Posture",
+      privacy: {
+        localOnly: true,
+        containsFrames: false,
+        containsLandmarks: false,
+        containsDeviceIdentifiers: false,
+      },
+      session: { cameraPermission: "not-tested", cameraStarts: 0 },
+    });
+    expect(report.checks.find((check) => check.id === "front-camera")?.status).toBe("not-tested");
+    expect(report.checks.find((check) => check.id === "rear-camera")?.status).toBe("not-tested");
+    expect(report.checks.find((check) => check.id === "local-inference")?.status).toBe(
+      "not-tested",
+    );
     const manifest = await page.request.get("/manifest.webmanifest");
     expect(manifest.status()).toBe(200);
     await expect(manifest.json()).resolves.toMatchObject({
@@ -195,6 +233,14 @@ test.describe("privacy-first posture coach smoke", () => {
     });
     await expect(page.locator(".error-note")).toContainText(/browser-playable video or image/i);
     await expect(page.getByText(/not uploaded/i)).toBeVisible();
+    await page.locator(".device-readiness summary").click();
+    const report = await downloadDeviceReport(page);
+    expect(report.session.cameraPermission).toBe("denied");
+    expect(report.session.cameraPermissionOutcomes).toEqual({
+      granted: 0,
+      denied: 1,
+      unavailable: 0,
+    });
   });
 
   test("shows a no-device fallback when the browser has no camera", async ({ page }) => {
@@ -212,6 +258,14 @@ test.describe("privacy-first posture coach smoke", () => {
     await page.getByRole("button", { name: "Use webcam" }).click();
     await expect(page.locator(".error-note")).toContainText(/No usable camera/i);
     await expect(page.getByRole("button", { name: "Choose video or image" })).toBeVisible();
+    await page.locator(".device-readiness summary").click();
+    const report = await downloadDeviceReport(page);
+    expect(report.session.cameraPermission).toBe("unavailable");
+    expect(report.session.cameraPermissionOutcomes).toEqual({
+      granted: 0,
+      denied: 0,
+      unavailable: 1,
+    });
   });
 
   test("surfaces unsupported exercise views before calibration", async ({ page }) => {
@@ -279,6 +333,10 @@ test.describe("privacy-first posture coach smoke", () => {
         }),
       )
       .toBe(true);
+    await page.locator(".device-readiness summary").click();
+    const report = await downloadDeviceReport(page);
+    expect(report.session.cameraStarts).toBe(0);
+    expect(report.session.inference.totalResults).toBe(0);
     expect(externalRequests).toEqual([]);
     expect(faults.pageErrors).toEqual([]);
     expect(faults.consoleErrors).toEqual([]);
@@ -463,13 +521,21 @@ test.describe("privacy-first posture coach smoke", () => {
     for (const width of [320, 768, 1024, 1440]) {
       await page.setViewportSize({ width, height: 900 });
       await page.goto("/");
+      await page.locator(".device-readiness summary").click();
       const layout = await page.evaluate(() => ({
         documentWidth: document.documentElement.scrollWidth,
         viewportWidth: document.documentElement.clientWidth,
+        reportButtonHeights: [
+          ...document.querySelectorAll<HTMLElement>(".device-report button"),
+        ].map((button) => button.getBoundingClientRect().height),
       }));
       expect(layout.documentWidth, `horizontal overflow at ${width}px`).toBeLessThanOrEqual(
         layout.viewportWidth,
       );
+      expect(
+        layout.reportButtonHeights.every((height) => height >= 44),
+        `undersized device-report control at ${width}px`,
+      ).toBe(true);
     }
   });
 

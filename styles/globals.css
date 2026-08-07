@@ -774,6 +774,77 @@ label:has(input:focus-visible) {
   margin: 0.7rem 0 0;
 }
 
+.device-report {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+
+.device-report h3,
+.device-report p {
+  margin: 0;
+}
+
+.device-report h3 {
+  color: var(--ink);
+  font-size: 0.72rem;
+}
+
+.device-report > p {
+  margin-top: 0.3rem;
+  color: var(--ink-muted);
+  font-size: 0.64rem;
+  line-height: 1.5;
+}
+
+.device-report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0.65rem;
+}
+
+.device-report-actions .button-secondary {
+  min-height: 2.75rem;
+  flex: 1 1 10rem;
+  font-size: 0.68rem;
+}
+
+.device-report-actions .button-secondary:disabled {
+  border-color: var(--line);
+  background: var(--paper-deep);
+  color: var(--ink-soft);
+  cursor: not-allowed;
+  transform: none;
+}
+
+.device-report-reset {
+  min-height: 2.75rem;
+  padding: 0.45rem;
+  border: 0;
+  background: transparent;
+  color: var(--ink-muted);
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 0.16rem;
+}
+
+.device-report-reset:hover {
+  color: var(--ink);
+}
+
+.device-report-reset:disabled {
+  color: var(--ink-soft);
+  cursor: not-allowed;
+  text-decoration: none;
+}
+
+.device-report > .device-report-status {
+  color: var(--green-dark);
+}
+
 .button-primary,
 .button-secondary {
   display: inline-flex;

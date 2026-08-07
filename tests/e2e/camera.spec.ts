@@ -1,4 +1,5 @@
 import path from "node:path";
+import { readFile } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 
 function captureBrowserFaults(page: Page) {
@@ -11,6 +12,28 @@ function captureBrowserFaults(page: Page) {
     }
   });
   return { pageErrors, consoleErrors };
+}
+
+async function downloadDeviceReport(page: Page) {
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download device report" }).click();
+  const download = await downloadPromise;
+  const reportPath = await download.path();
+  if (!reportPath) throw new Error("Device report download did not produce a local file.");
+  return JSON.parse(await readFile(reportPath, "utf8")) as {
+    privacy: Record<string, boolean>;
+    environment: { viewport: { width: number; height: number } };
+    session: {
+      cameraStarts: number;
+      cameraPermissionOutcomes: { granted: number; denied: number; unavailable: number };
+      cameraFacingsTested: string[];
+      cameraRuntimesByFacing: Record<string, { effectiveWidth: number; effectiveHeight: number }>;
+      cameraCleanupConfirmed: boolean | null;
+      latestCamera: { effectiveWidth: number; effectiveHeight: number } | null;
+      inference: { totalResults: number; p95LatencyMs: number | null };
+    };
+    checks: Array<{ id: string; status: string }>;
+  };
 }
 
 test("analyzes a fake webcam stream locally", async ({ page, browserName }, testInfo) => {
@@ -72,6 +95,8 @@ test("analyzes a fake webcam stream locally", async ({ page, browserName }, test
   await expect(page.getByText(/\d+ms live.*Detail 720px/i)).toBeVisible({ timeout: 15_000 });
   await page.locator(".device-readiness summary").click();
   await expect(page.getByText(/Screen wake lock active/i)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Download device report" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Reset check" })).toBeDisabled();
   await page.evaluate(async () => {
     const sentinels = (
       window as typeof window & {
@@ -140,6 +165,8 @@ test("analyzes a fake webcam stream locally", async ({ page, browserName }, test
     }
   }
   await page.getByRole("button", { name: "Stop session" }).click();
+  await expect(page.getByRole("button", { name: "Download device report" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Reset check" })).toBeEnabled();
   await expect
     .poll(() =>
       page.evaluate(() => {
@@ -203,6 +230,41 @@ test("analyzes a fake webcam stream locally", async ({ page, browserName }, test
       ),
     ).toBeGreaterThanOrEqual(5);
   }
+  const report = await downloadDeviceReport(page);
+  expect(report.privacy).toEqual({
+    localOnly: true,
+    containsFrames: false,
+    containsLandmarks: false,
+    containsDeviceIdentifiers: false,
+  });
+  expect(report.session.cameraStarts).toBeGreaterThanOrEqual(1);
+  expect(report.session.cameraPermissionOutcomes.granted).toBeGreaterThanOrEqual(1);
+  expect(report.session.cameraFacingsTested.length).toBeGreaterThanOrEqual(1);
+  expect(
+    report.session.cameraFacingsTested.every(
+      (facing) => facing === "user" || facing === "environment",
+    ),
+  ).toBe(true);
+  expect(report.session.cameraCleanupConfirmed).toBe(true);
+  expect(report.session.inference.totalResults).toBeGreaterThan(0);
+  expect(report.session.inference.p95LatencyMs).not.toBeNull();
+  expect(report.checks.find((check) => check.id === "live-pose")?.status).toBe("observed");
+  expect(report.checks.find((check) => check.id === "camera-cleanup")?.status).toBe("observed");
+  if (browserName === "chromium") {
+    expect(report.session.cameraFacingsTested).toEqual(["user", "environment"]);
+    expect(Object.keys(report.session.cameraRuntimesByFacing).sort()).toEqual([
+      "environment",
+      "user",
+    ]);
+  }
+  if (testInfo.project.name === "mobile-chromium") {
+    expect(report.session.latestCamera).not.toBeNull();
+    expect(report.session.latestCamera!.effectiveHeight).toBeGreaterThanOrEqual(
+      report.session.latestCamera!.effectiveWidth,
+    );
+    expect(report.checks.find((check) => check.id === "portrait-frame")?.status).toBe("observed");
+  }
+  expect(JSON.stringify(report)).not.toMatch(/"deviceId":|"groupId":|"landmarks":/i);
   expect(faults.pageErrors).toEqual([]);
   expect(faults.consoleErrors).toEqual([]);
 });

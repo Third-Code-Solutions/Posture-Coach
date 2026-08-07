@@ -30,8 +30,11 @@ import {
 } from "../../src/domain";
 import {
   AdaptiveInferenceQualityController,
+  buildDeviceDiagnosticReport,
   type CameraFacingMode,
   type CameraRuntimeInfo,
+  type DeviceDiagnosticReport,
+  DeviceDiagnosticsRecorder,
   type FrameDimensions,
   type InferenceQualityProfile,
   INFERENCE_QUALITY_PROFILES,
@@ -40,6 +43,7 @@ import {
   getInferenceFrameDimensions,
   getPortraitFallbackVideoConstraints,
   getPortraitPreviewFrameDimensions,
+  hasObservableFullBody,
   getLocalMediaKind,
   isCompactCaptureViewport,
   isPortraitFrame,
@@ -301,6 +305,7 @@ export function CoachApp() {
   const framePipelineStartedAtRef = useRef(new Map<number, number>());
   const inferenceFrameSizeRef = useRef<FrameDimensions | null>(null);
   const adaptiveInferenceRef = useRef(new AdaptiveInferenceQualityController());
+  const deviceDiagnosticsRef = useRef(new DeviceDiagnosticsRecorder());
   const visualSmootherRef = useRef(
     new LandmarkSmoother(MEASUREMENT_THRESHOLDS.temporal.visualSmootherAlphaAtReferenceFrame),
   );
@@ -373,7 +378,11 @@ export function CoachApp() {
       const delegate = message.version.match(/\b(GPU|CPU)\b/)?.[1];
       const model =
         message.model === "blazepose_tfjs_full" ? "BlazePose Full" : "Pose Landmarker Full";
-      setWorkerLabel(`${model}${delegate ? ` · ${delegate}` : ""} · local`);
+      const label = `${model}${delegate ? ` · ${delegate}` : ""} · local`;
+      if (sourceKindRef.current === "camera") {
+        deviceDiagnosticsRef.current.recordEngineLabel(label);
+      }
+      setWorkerLabel(label);
       return;
     }
     if (message.type === "error") {
@@ -393,6 +402,12 @@ export function CoachApp() {
       mirroredPreview: mirroredRef.current,
     });
     const isImage = sourceKindRef.current === "image";
+    const isCamera = sourceKindRef.current === "camera";
+    if (isCamera) {
+      deviceDiagnosticsRef.current.recordFullBodyFraming(
+        hasObservableFullBody(observation.landmarks, observation.poseConfidence),
+      );
+    }
     setLandmarks(
       isImage
         ? observation.landmarks
@@ -405,8 +420,10 @@ export function CoachApp() {
         0,
         Math.round(performance.now() - (pipelineStartedAt ?? message.timestampMs)),
       );
+      if (isCamera) deviceDiagnosticsRef.current.recordLatency(latencyMs);
       setTrackingLatencyMs(latencyMs);
       const quality = adaptiveInferenceRef.current.observe(latencyMs);
+      if (isCamera) deviceDiagnosticsRef.current.recordInferenceProfile(quality.profile);
       if (quality.changed) setInferenceQuality(quality.profile);
     }
     if (isImage) {
@@ -594,7 +611,7 @@ export function CoachApp() {
     setPortraitCapture(isPortraitFrame(effectiveWidth, effectiveHeight));
     if (sourceKindRef.current === "camera") {
       const settings = cameraTrackSettingsRef.current;
-      setCameraRuntime({
+      const runtime: CameraRuntimeInfo = {
         rawWidth: width,
         rawHeight: height,
         effectiveWidth,
@@ -602,7 +619,9 @@ export function CoachApp() {
         rotatedLocally: rotateLandscapeCamera,
         facingMode: settings?.facingMode ?? cameraFacingRef.current,
         frameRate: settings?.frameRate ?? null,
-      });
+      };
+      deviceDiagnosticsRef.current.recordCameraRuntime(runtime);
+      setCameraRuntime(runtime);
     }
     if (rotateLandscapeCamera) {
       const canvas = portraitPreviewCanvasRef.current;
@@ -783,8 +802,18 @@ export function CoachApp() {
       handleFrameCaptureFailure(sourceEpoch);
       return;
     }
-    if (frameCaptureInFlightRef.current) return;
-    if (!worker.canAcceptFrame()) return;
+    if (frameCaptureInFlightRef.current) {
+      if (sourceKindRef.current === "camera") {
+        deviceDiagnosticsRef.current.recordBackpressureSkip();
+      }
+      return;
+    }
+    if (!worker.canAcceptFrame()) {
+      if (sourceKindRef.current === "camera") {
+        deviceDiagnosticsRef.current.recordBackpressureSkip();
+      }
+      return;
+    }
     if (currentTime <= lastVideoTimeRef.current) return;
     const pipelineStartedAtMs = portraitCanvas ? portraitPipelineStartedAtMs : performance.now();
     let captureCanvas: HTMLCanvasElement | null = null;
@@ -819,6 +848,9 @@ export function CoachApp() {
       framePipelineStartedAtRef.current.set(sequence, pipelineStartedAtMs);
       if (!worker.submit(frame, timestampMs, sequence)) {
         framePipelineStartedAtRef.current.delete(sequence);
+        if (sourceKindRef.current === "camera") {
+          deviceDiagnosticsRef.current.recordBackpressureSkip();
+        }
         return;
       }
       const previousFrameSize = inferenceFrameSizeRef.current;
@@ -828,6 +860,9 @@ export function CoachApp() {
         previousFrameSize.height !== acceptedFrameSize.height
       ) {
         inferenceFrameSizeRef.current = acceptedFrameSize;
+        if (sourceKindRef.current === "camera") {
+          deviceDiagnosticsRef.current.recordInferenceFrameSize(acceptedFrameSize);
+        }
         setInferenceFrameSize(acceptedFrameSize);
       }
     } catch {
@@ -973,6 +1008,7 @@ export function CoachApp() {
     setError(null);
     cleanupSession(false);
     primeForCameraAction();
+    deviceDiagnosticsRef.current.recordCameraRequest();
     cameraFacingRef.current = requestedFacing;
     setCameraFacing(requestedFacing);
     const requestedMirror = requestedFacing === "user";
@@ -980,6 +1016,7 @@ export function CoachApp() {
     mirroredRef.current = requestedMirror;
     setCalibration(createCalibrationProfile(modeRef.current, viewRef.current, requestedMirror));
     if (!navigator.mediaDevices?.getUserMedia) {
+      deviceDiagnosticsRef.current.recordCameraPermission("unavailable");
       setSourceState("error");
       setError(
         "Camera access is not available in this browser. You can still choose a local video file.",
@@ -991,6 +1028,7 @@ export function CoachApp() {
     cameraRequestSequenceRef.current = requestId;
     pendingCameraRequestRef.current = requestId;
     const sourceEpoch = sourceEpochRef.current;
+    let permissionRecorded = false;
     try {
       if (shouldUsePortraitTransform()) {
         const orientation = window.screen?.orientation as
@@ -1042,9 +1080,17 @@ export function CoachApp() {
         sourceEpoch !== sourceEpochRef.current ||
         document.visibilityState === "hidden"
       ) {
-        stream.getTracks().forEach((track) => track.stop());
+        const staleTracks = stream.getTracks();
+        staleTracks.forEach((track) => track.stop());
+        if (staleTracks.length > 0) {
+          deviceDiagnosticsRef.current.recordCameraCleanup(
+            staleTracks.every((track) => track.readyState === "ended"),
+          );
+        }
         return;
       }
+      deviceDiagnosticsRef.current.recordCameraPermission("granted");
+      permissionRecorded = true;
       streamRef.current = stream;
       sourceKindRef.current = "camera";
       setCameraMuted(false);
@@ -1112,9 +1158,14 @@ export function CoachApp() {
     } catch (caught) {
       if (pendingCameraRequestRef.current !== requestId || sourceEpoch !== sourceEpochRef.current)
         return;
+      const name = caught instanceof DOMException ? caught.name : "";
+      if (!permissionRecorded) {
+        deviceDiagnosticsRef.current.recordCameraPermission(
+          name === "NotAllowedError" ? "denied" : "unavailable",
+        );
+      }
       cleanupSession(false);
       setSourceState("error");
-      const name = caught instanceof DOMException ? caught.name : "";
       setError(
         name === "NotAllowedError"
           ? "Camera permission was declined. You can continue with a local video file."
@@ -1438,7 +1489,13 @@ export function CoachApp() {
     stopFrameLoop();
     cameraTrackCleanupRef.current?.();
     cameraTrackCleanupRef.current = null;
-    streamRef.current?.getTracks().forEach((track) => track.stop());
+    const cameraTracks = streamRef.current?.getTracks() ?? [];
+    cameraTracks.forEach((track) => track.stop());
+    if (cameraTracks.length > 0) {
+      deviceDiagnosticsRef.current.recordCameraCleanup(
+        cameraTracks.every((track) => track.readyState === "ended"),
+      );
+    }
     pendingCameraRequestRef.current = null;
     streamRef.current = null;
     releaseMediaSource();
@@ -1459,6 +1516,28 @@ export function CoachApp() {
       setLandmarks(null);
     }
   }
+
+  const createDeviceReport = (): DeviceDiagnosticReport => {
+    const capabilities = readBrowserCapabilities();
+    return buildDeviceDiagnosticReport({
+      snapshot: deviceDiagnosticsRef.current.snapshot(),
+      environment: {
+        generatedAt: new Date().toISOString(),
+        appUrl: `${window.location.origin}${window.location.pathname}`,
+        userAgent: navigator.userAgent,
+        language: navigator.language,
+        viewport: {
+          width: window.innerWidth,
+          height: window.innerHeight,
+          pixelRatio: window.devicePixelRatio,
+        },
+        capabilities,
+        inferenceRoute: selectPoseInferenceRoute(capabilities),
+      },
+    });
+  };
+
+  const resetDeviceReport = () => deviceDiagnosticsRef.current.reset();
 
   const viewSupported = isViewSupported(mode, view);
   const displayedResult = sourceState === "active" && sourceKind !== "image" ? result : null;
@@ -1835,11 +1914,14 @@ export function CoachApp() {
               </div>
               <DeviceReadiness
                 cameraRuntime={cameraRuntime}
+                cameraSessionActive={sourceState === "requesting" || sourceKind === "camera"}
                 cameraMuted={cameraMuted}
                 inferenceFrameSize={inferenceFrameSize}
                 inferenceQuality={inferenceQuality}
                 trackingLatencyMs={trackingLatencyMs}
                 wakeLockState={wakeLockState}
+                createDeviceReport={createDeviceReport}
+                resetDeviceReport={resetDeviceReport}
               />
             </aside>
           </div>

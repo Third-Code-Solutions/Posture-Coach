@@ -193,7 +193,7 @@ The standards and vendor references behind this table are [Media Capture and Str
 - behavior after rotate, lock/unlock, background/foreground, permission change, camera-in-use, low light, low battery, and thermal throttling;
 - full-body framing success at realistic room distances with front, side, and three-quarter views.
 
-These diagnostics should be aggregate, local, and opt-in if retained. A production privacy posture should not require uploading frames or a device fingerprint merely to learn whether a camera path is healthy.
+These diagnostics are now implemented as an explicit local download in Device readiness. The bounded report retains aggregate runtime observations only and declares its privacy fields in the artifact. It does not contain frames, landmarks, `deviceId`, or `groupId`, and the app does not upload it. A production privacy posture should not require uploading frames or a device fingerprint merely to learn whether a camera path is healthy.
 
 ## Required physical-device validation
 
@@ -221,6 +221,8 @@ These diagnostics should be aggregate, local, and opt-in if retained. A producti
 ### Evidence to save per run
 
 Record browser/OS/device, camera facing mode, permission result, `track.getSettings()`, `videoWidth`/`videoHeight`, effective canvas width/height, whether rotation was activated, inference delegate/model, p50/p95 latency, dropped frames, console errors, network requests, and whether tracks stopped after exit. Do not save camera frames unless a separate, explicit test protocol requires it.
+
+Use the local JSON report for runtime values, then attach the device model, OS/browser versions, test conditions, console/network observations, and pass/fail decision in the release record. See [physical-device certification](../physical-device-certification.md).
 
 ## Unresolved hardware and product limits
 
