@@ -27,7 +27,7 @@ video or image element -> ImageBitmap -> capability route
                               deterministic priority resolver -> local evidence registry -> React snapshot
 ```
 
-`src/domain/**` has no React, DOM, MediaPipe, network, randomness, or wall-clock dependencies. All timestamps enter as arguments. Presentation mirroring is applied only in `PoseCanvas`; canonical left/right landmark labels remain unchanged.
+`src/domain/**` has no React, DOM, MediaPipe, network, randomness, or wall-clock dependencies. All timestamps enter as arguments. `src/browser-session/**` owns generated countdown audio, timer cancellation, stale wake-lock requests, browser release events, and session-stop cleanup behind deterministic controllers. React subscribes to those controller snapshots. Presentation mirroring is applied only in `PoseCanvas`; canonical left/right landmark labels remain unchanged.
 
 `src/knowledge/posture-evidence.ts` is a static, versioned cache of paraphrased posture guidance and direct source metadata. It performs no fetches. Evaluator feedback carries source IDs, and the UI resolves those IDs locally so a cue remains inspectable without an API key or a live research service.
 
@@ -42,6 +42,10 @@ The current browser surface shows one cue at a time, keeps camera activation beh
 Dedicated-worker inference remains preferred. WebKit builds that expose `ImageBitmap` and WebAssembly but cannot create a worker `OffscreenCanvasRenderingContext2D` use a one-frame-in-flight main-thread BlazePose/WASM compatibility client. The heavy model stays lazy-loaded, all assets remain same-origin, and the client still drops work instead of queueing stale frames.
 
 Camera constraints prefer portrait dimensions and preserve selected front/rear lens through preferred, reduced-resolution, and unconstrained fallbacks. Switching lenses stops the prior stream before requesting another. Front preview mirrors by default; rear preview does not, while canonical anatomical labels stay unchanged. When a compact or touch device still reports a landscape camera track, the client rotates frames into a portrait canvas locally before both preview and inference. Inference bitmaps are capped at 720px on the longest edge to reduce mobile transfer and compute pressure; normalized landmark geometry remains aligned to the effective portrait source dimensions.
+
+Camera sessions enter guided setup before calibration: a five-second visual/local-tone countdown accepts no baseline samples, then starts the existing confidence-gated calibration window. Desk calibration requires stable torso distance, head offset, shoulder level, and trunk lean across the accepted window. Countdown timers, generated-audio context, and optional screen wake lock are released on every source/session exit.
+
+Browser API basis: [Screen Wake Lock API](https://developer.mozilla.org/en-US/docs/Web/API/Screen_Wake_Lock_API), [AudioContext](https://developer.mozilla.org/en-US/docs/Web/API/AudioContext), and [generated oscillator tones](https://developer.mozilla.org/en-US/docs/Web/API/BaseAudioContext/createOscillator).
 
 Standing mode is a separate stationary evaluator. It requires head-to-ankle landmarks, calibrates a relaxed full-body baseline, and uses side-view head/trunk geometry plus front-view shoulder/hip geometry only when the selected view supports that signal. A steady result means the visible landmarks are close to that baseline; it is not a clinical normal/abnormal judgment.
 

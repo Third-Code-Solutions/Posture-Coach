@@ -3,6 +3,7 @@ import { probeWebglCapabilities } from "./delegate";
 export interface BrowserCapabilities {
   secureContext: boolean;
   cameraApi: boolean;
+  screenWakeLock: boolean;
   worker: boolean;
   workerCanvas2d: boolean;
   imageBitmap: boolean;
@@ -17,6 +18,7 @@ export function readBrowserCapabilities(): BrowserCapabilities {
     return {
       secureContext: false,
       cameraApi: false,
+      screenWakeLock: false,
       worker: false,
       workerCanvas2d: false,
       imageBitmap: false,
@@ -34,6 +36,7 @@ export function readBrowserCapabilities(): BrowserCapabilities {
       window.location.hostname === "localhost" ||
       window.location.hostname === "127.0.0.1",
     cameraApi: Boolean(navigator.mediaDevices?.getUserMedia),
+    screenWakeLock: "wakeLock" in navigator,
     worker: typeof Worker !== "undefined",
     workerCanvas2d,
     imageBitmap: typeof createImageBitmap === "function",

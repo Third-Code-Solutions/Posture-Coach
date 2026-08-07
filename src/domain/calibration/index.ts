@@ -99,6 +99,11 @@ export class CalibrationWindow {
       this.samples = [];
       return this.profile(null);
     }
+    const deskMetrics = this.mode === "desk" ? deskCalibrationMetrics(observation) : null;
+    if (this.mode === "desk" && deskMetrics === null) {
+      this.samples = [];
+      return this.profile(null);
+    }
     this.samples.push({
       torso,
       shoulderTilt: Math.abs(
@@ -107,6 +112,7 @@ export class CalibrationWindow {
       hipTilt: Math.abs(observation.landmarks.leftHip.y - observation.landmarks.rightHip.y),
       ...(movementMetric === null ? {} : { movementMetric }),
       ...(extraMetrics ?? {}),
+      ...(deskMetrics ?? {}),
       ...(standingMetrics ?? {}),
     });
     if (this.samples.length > this.targetSamples) this.samples.shift();
@@ -141,20 +147,19 @@ export class CalibrationWindow {
     const min = Math.min(...torsos);
     const max = Math.max(...torsos);
     if (max - min > Math.max(0.035, min * 0.16)) return false;
-    if (this.mode === "desk") return true;
+    if (this.mode === "desk") {
+      return metricsStayWithinRange(this.samples, {
+        deskHeadOffset: 0.08,
+        deskShoulderTilt: 0.08,
+        deskTorsoLean: 0.08,
+      });
+    }
     if (this.mode === "standing") {
-      const tolerances: Record<string, number> = {
+      return metricsStayWithinRange(this.samples, {
         standingHeadOffset: 0.1,
         standingBodyLean: 0.06,
         standingShoulderTilt: 0.1,
         standingHipTilt: 0.1,
-      };
-      return Object.entries(tolerances).every(([key, tolerance]) => {
-        const values = this.samples.map((sample) => sample[key]);
-        if (values.some((value) => value === undefined)) return false;
-        const minValue = Math.min(...(values as number[]));
-        const maxValue = Math.max(...(values as number[]));
-        return maxValue - minValue <= tolerance;
       });
     }
     const metrics = this.samples.map((sample) => sample.movementMetric);
@@ -183,6 +188,34 @@ export class CalibrationWindow {
       ]),
     );
   }
+}
+
+function metricsStayWithinRange(
+  samples: ReadonlyArray<Readonly<Record<string, number>>>,
+  tolerances: Readonly<Record<string, number>>,
+): boolean {
+  return Object.entries(tolerances).every(([key, tolerance]) => {
+    const values = samples.map((sample) => sample[key]);
+    if (values.some((value) => value === undefined || !Number.isFinite(value))) return false;
+    const finiteValues = values as number[];
+    return Math.max(...finiteValues) - Math.min(...finiteValues) <= tolerance;
+  });
+}
+
+function deskCalibrationMetrics(observation: FrameObservation): Record<string, number> | null {
+  const { landmarks } = observation;
+  const shoulders = midpoint(landmarks.leftShoulder, landmarks.rightShoulder);
+  const hips = midpoint(landmarks.leftHip, landmarks.rightHip);
+  const ears = midpoint(landmarks.leftEar, landmarks.rightEar);
+  if (!isFinitePoint(shoulders) || !isFinitePoint(hips) || !isFinitePoint(ears)) return null;
+  const torso = distance(shoulders, hips);
+  if (!Number.isFinite(torso) || torso < 1e-6) return null;
+  const metrics = {
+    deskHeadOffset: (ears.x - shoulders.x) / torso,
+    deskShoulderTilt: (landmarks.leftShoulder.y - landmarks.rightShoulder.y) / torso,
+    deskTorsoLean: (shoulders.x - hips.x) / torso,
+  };
+  return Object.values(metrics).every(Number.isFinite) ? metrics : null;
 }
 
 function standingCalibrationMetrics(observation: FrameObservation): Record<string, number> | null {

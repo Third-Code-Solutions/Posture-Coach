@@ -17,6 +17,31 @@ function poseVideoFixture(): string {
   return path.resolve("output/playwright/fixtures/pose-20s.mp4");
 }
 
+async function installWakeLockMock(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    class TestWakeLockSentinel extends EventTarget {
+      released = false;
+      async release() {
+        if (this.released) return;
+        this.released = true;
+        this.dispatchEvent(new Event("release"));
+      }
+    }
+    const sentinels: TestWakeLockSentinel[] = [];
+    Object.defineProperty(window, "__testWakeLocks", { value: sentinels });
+    Object.defineProperty(navigator, "wakeLock", {
+      configurable: true,
+      value: {
+        request: async () => {
+          const sentinel = new TestWakeLockSentinel();
+          sentinels.push(sentinel);
+          return sentinel;
+        },
+      },
+    });
+  });
+}
+
 async function expectLocalPoseEngine(page: Page, browserName: string) {
   const engine = page.getByText(/(?:Pose Landmarker|BlazePose) Full.*local/i);
   await expect(engine).toBeVisible({ timeout: 30_000 });
@@ -37,6 +62,8 @@ test.describe("privacy-first posture coach smoke", () => {
     const cameraLens = page.getByLabel("Camera lens");
     await expect(cameraLens.locator("option")).toHaveCount(2);
     await expect(cameraLens).toHaveValue("user");
+    await expect(page.getByRole("checkbox", { name: /Guided camera setup/ })).toBeChecked();
+    await expect(page.getByText(/five-second visual and local-tone countdown/i)).toBeVisible();
     await page.getByText("Device readiness", { exact: true }).click();
     await expect(
       page.getByText(
@@ -63,6 +90,16 @@ test.describe("privacy-first posture coach smoke", () => {
   });
 
   test("shows safe fallbacks for camera denial and invalid uploads", async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "mediaDevices", {
+        configurable: true,
+        value: {
+          getUserMedia: async () => {
+            throw new DOMException("Camera permission denied", "NotAllowedError");
+          },
+        },
+      });
+    });
     await page.goto("/");
 
     await page.getByRole("button", { name: "Use webcam" }).click();
@@ -112,6 +149,7 @@ test.describe("privacy-first posture coach smoke", () => {
       "Playwright WebKit on Windows advertises codecs but cannot decode local video blobs.",
     );
     test.setTimeout(45_000);
+    await installWakeLockMock(page);
     const faults = captureBrowserFaults(page);
     const externalRequests: string[] = [];
     let localOrigin = "";
@@ -126,10 +164,30 @@ test.describe("privacy-first posture coach smoke", () => {
     await page.getByLabel("Camera view").selectOption("front");
     await page.locator('input[type="file"]').setInputFiles(poseVideoFixture());
     await expectLocalPoseEngine(page, browserName);
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const sentinels = (
+            window as typeof window & { __testWakeLocks?: Array<{ released: boolean }> }
+          ).__testWakeLocks;
+          return Boolean(sentinels?.length && !sentinels[0]?.released);
+        }),
+      )
+      .toBe(true);
     await page.getByRole("button", { name: "Calibrate" }).click();
     await expect(page.getByText("Calibration ready")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText("Clear", { exact: true })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText("Session summary")).toBeVisible({ timeout: 30_000 });
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const sentinels = (
+            window as typeof window & { __testWakeLocks?: Array<{ released: boolean }> }
+          ).__testWakeLocks;
+          return Boolean(sentinels?.length && sentinels.every((sentinel) => sentinel.released));
+        }),
+      )
+      .toBe(true);
     expect(externalRequests).toEqual([]);
     expect(faults.pageErrors).toEqual([]);
     expect(faults.consoleErrors).toEqual([]);

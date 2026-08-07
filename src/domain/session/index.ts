@@ -8,6 +8,12 @@ import type {
 } from "../contracts";
 
 const MAX_FRAME_GAP_MS = 2_000;
+export const GUIDED_SETUP_DELAY_MS = 5_000;
+
+export function guidedSetupSecondsRemaining(deadlineMs: number, nowMs: number): number {
+  if (!Number.isFinite(deadlineMs) || !Number.isFinite(nowMs)) return 0;
+  return Math.max(0, Math.ceil((deadlineMs - nowMs) / 1_000));
+}
 
 export class SessionTracker {
   private readonly mode: AnalysisMode;

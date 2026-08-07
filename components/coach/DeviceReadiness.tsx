@@ -7,6 +7,7 @@ import {
   readBrowserCapabilities,
 } from "../../src/vision";
 import type { BrowserCapabilities, CameraRuntimeInfo } from "../../src/vision";
+import type { WakeLockState } from "../../src/browser-session";
 
 function ReadinessRow({ label, detail, ready }: { label: string; detail: string; ready: boolean }) {
   return (
@@ -25,9 +26,11 @@ function ReadinessRow({ label, detail, ready }: { label: string; detail: string;
 export function DeviceReadiness({
   cameraRuntime,
   cameraMuted,
+  wakeLockState,
 }: {
   cameraRuntime: CameraRuntimeInfo | null;
   cameraMuted: boolean;
+  wakeLockState: WakeLockState;
 }) {
   const [capabilities, setCapabilities] = useState<BrowserCapabilities | null>(null);
 
@@ -83,6 +86,26 @@ export function DeviceReadiness({
                   : "WASM CPU fallback will be used"
             }
             ready={capabilities.webgl2 || capabilities.webgl || capabilities.webAssembly}
+          />
+          <ReadinessRow
+            label="Hands-free display"
+            detail={
+              !capabilities.screenWakeLock || wakeLockState === "unsupported"
+                ? "Wake lock unavailable; increase the device sleep timeout"
+                : wakeLockState === "active"
+                  ? "Screen wake lock active for this live session"
+                  : wakeLockState === "released"
+                    ? "System released the wake lock; keep the screen awake manually"
+                    : wakeLockState === "blocked"
+                      ? "Battery or browser settings declined the wake lock"
+                      : "Screen wake lock available when a live session starts"
+            }
+            ready={
+              capabilities.screenWakeLock &&
+              wakeLockState !== "unsupported" &&
+              wakeLockState !== "released" &&
+              wakeLockState !== "blocked"
+            }
           />
           {cameraRuntime && (
             <ReadinessRow

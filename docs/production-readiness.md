@@ -9,6 +9,8 @@ Updated 2026-08-07 for the cross-device production hardening pass.
 - MediaPipe Pose Landmarker Full runs in a dedicated worker with same-origin pinned assets when worker Canvas2D is available.
 - GPU delegate is preferred. Local TensorFlow.js WASM BlazePose Full is the no-WebGL worker fallback and the WebKit-compatible main-thread fallback.
 - User can choose front or rear camera. Lens selection survives all constraint fallbacks; active switching releases old tracks before reconnecting.
+- Camera sessions default to a five-second hands-free guided setup before calibration. Baseline sampling cannot begin during the countdown; users can start immediately or disable guided setup.
+- Active video requests the optional Screen Wake Lock API and reports active, unsupported, system-released, or blocked state without treating wake lock as required for coaching.
 - Camera requests prefer portrait constraints. Compact/touch devices receive a local 90-degree portrait compositor when hardware returns landscape frames.
 - Inference frames are resized to a maximum 720px longest edge. Preview and overlay retain effective source dimensions, so resizing does not crop full-body framing.
 - Coach output is educational visible-form guidance. It abstains on missing landmarks, low confidence, unsupported view, stale frames, invalid geometry, calibration mismatch, or framing drift.
@@ -40,11 +42,15 @@ Local gates required before release:
 
 2026-08-07 local production-export evidence:
 
-- 61 unit/domain tests passed.
-- Full Playwright matrix: 51 passed; 6 explicit WebKit local-video codec skips.
+- 73 unit/domain/browser-adapter tests passed, including React unmount cleanup.
+- Full Playwright matrix: 57 passed; 7 explicit platform-bound skips.
 - Desktop Chromium, Firefox, and WebKit smoke: 30 passed; 3 WebKit local-video tests skipped because Playwright WebKit on Windows advertises codecs but rejects every tested local video blob. WebKit still passed real local-image pose inference through the BlazePose/WASM compatibility path.
 - Pixel 7 and iPhone 13 emulation smoke: 19 passed; the same 3 WebKit codec-bound tests skipped.
-- Chrome fake camera: 2 passed, including a 320×180 landscape source rotated to an effective 180×320 portrait preview before inference.
+- Chrome fake camera: 3 passed, including a 320×180 landscape source rotated to an effective 180×320 portrait preview before inference, guided setup with a directly observed zero-sample invariant, system wake-lock release, lens-switch reacquisition, hidden-page cleanup, and hands-free calibration start.
+- Firefox synthetic camera: 2 passed for guided setup, local inference startup, wake-lock system release, stop, and hidden-page cleanup. Firefox portrait-compositor coverage is skipped because its synthetic source is not the deterministic Chrome Y4M fixture.
+- Pixel 7 Chrome camera emulation: 3 passed for front/rear source switching, guided setup, portrait rotation, local inference, wake-lock lifecycle, and hidden-page cleanup.
+- Browser-adapter tests cover unsupported and rejected wake-lock requests, system release, active-session stop, and a delayed stale request resolving after stop. Static-host verification requires identical camera and screen-wake-lock permissions on the exported server.
+- Pixel 7 guided-setup visual check: 412px viewport/document width, 330×587 countdown exactly covered the portrait preview, 55px guided control, no overflow, no console/page/HTTP errors, no external requests, and source released on stop.
 - Cold local shell: 142,493 initial transfer bytes; desktop LCP 332ms, mobile LCP 112ms, CLS 0 for both. Localhost timing is a regression baseline, not internet-user latency.
 - Pixel 7 emulation local-video tracking sample: model ready in 843ms, sampled live latency p50 19ms / p95 26ms / max 27ms, zero external requests, console errors, or page errors. Emulator timing is not physical-device certification.
 - Rendered semantics: one `main`, one `h1`, `lang=en`, no duplicate IDs, no unlabeled controls in the checked surface, and a keyboard-visible skip link.

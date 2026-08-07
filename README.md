@@ -22,7 +22,7 @@ pnpm build
 pnpm test:e2e
 ```
 
-`test:e2e` serves the static export on port `3010` and runs installed Chrome, Firefox, WebKit, Pixel 7 emulation, and iPhone 13 emulation. Fake-camera tests use the installed Chrome channel because Playwright's bundled Chromium on Windows does not expose the fake capture device. The browser gate remains isolated from any other local app on port `3000`.
+`test:e2e` serves the static export on port `3010` and runs installed Chrome, Firefox, WebKit, Pixel 7 emulation, and iPhone 13 emulation. Chrome and Pixel 7 camera tests use a deterministic Y4M source through the installed Chrome channel; Firefox uses its built-in synthetic camera. Playwright WebKit on Windows cannot certify Safari/iPhone camera drivers, so real iOS hardware remains a separate release gate. The browser gate stays isolated from any other local app on port `3000`.
 
 ## Hosting readiness
 
@@ -47,11 +47,13 @@ In a second terminal, confirm `http://127.0.0.1:3001/healthz` returns `ok`, then
 - Evaluation abstains when required landmarks are missing, confidence is low, the view is unsupported, or calibration is not stable.
 - Inference frames are capped at 720px on the longest edge to reduce transfer and CPU/GPU pressure on phones; displayed preview keeps full source framing.
 - Front camera mirrors preview by default; rear camera stays unmirrored and usually offers wider full-body framing. Canonical anatomical left/right labels never change.
+- Guided camera setup waits five seconds before accepting baseline samples, giving the person time to leave the controls and stand naturally. A generated local tone accompanies the visible countdown when browser audio is available.
+- Live video requests an optional screen wake lock so phones do not dim during hands-free practice. Unsupported or battery-blocked devices continue normally and show a manual sleep-setting fallback.
 - The device-readiness panel reports secure context, camera API, local inference capability, worker compatibility, and GPU/WASM fallback status without sending telemetry.
 - Stop if you feel pain. Seek qualified professional help for injury, pain, or rehabilitation.
 
 ## Technical notes
 
-The MediaPipe Pose Landmarker runs in a dedicated worker using the pinned Full model and same-origin Wasm assets. Browsers without worker Canvas2D use a lazy, one-frame-in-flight BlazePose/WASM compatibility client on the main thread. The pure domain engine owns normalization, confidence gating, smoothing, calibration, geometry, movement phases, deterministic feedback, and summaries; React only presents snapshots.
+The MediaPipe Pose Landmarker runs in a dedicated worker using the pinned Full model and same-origin Wasm assets. Browsers without worker Canvas2D use a lazy, one-frame-in-flight BlazePose/WASM compatibility client on the main thread. The pure domain engine owns normalization, confidence gating, smoothing, calibration, geometry, movement phases, deterministic feedback, and summaries. Browser-session adapters own guided-setup audio/timing and wake-lock lifecycle; React only binds actions and presents snapshots.
 
 See [docs/architecture.md](docs/architecture.md), [docs/licensing.md](docs/licensing.md), [docs/production-readiness.md](docs/production-readiness.md), and [tasks/plan.md](tasks/plan.md).

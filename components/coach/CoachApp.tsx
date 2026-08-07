@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { FeedbackCard } from "../feedback/FeedbackCard";
 import { ModeSelector } from "../controls/ModeSelector";
 import { DeviceReadiness } from "./DeviceReadiness";
+import { useSessionAssistance } from "./useSessionAssistance";
 import { PoseCanvas } from "../overlay/PoseCanvas";
 import {
   AnalysisMode,
@@ -285,6 +286,17 @@ export function CoachApp() {
   const pendingCameraRequestRef = useRef<number | null>(null);
   const cameraTrackCleanupRef = useRef<(() => void) | null>(null);
   const sourceTokenRef = useRef<SourceToken | null>(null);
+  const {
+    guidedSetupEnabled,
+    guidedSetupSeconds,
+    wakeLockState,
+    setGuidedSetupEnabled,
+    primeForCameraAction,
+    startGuidedSetup,
+    cancelGuidedSetup,
+    requestWakeLock,
+    stop: stopSessionAssistance,
+  } = useSessionAssistance(beginCalibrationForCurrentContext);
 
   useEffect(() => {
     viewRef.current = view;
@@ -718,6 +730,9 @@ export function CoachApp() {
         setSessionSummary(null);
       }
       startLoop();
+      const sourceEpoch = sourceEpochRef.current;
+      void requestWakeLock(() => sourceEpoch === sourceEpochRef.current && processingRef.current);
+      if (token.kind === "camera") startGuidedSetupForCamera();
     } catch {
       if (!isCurrentVideoSource(video, token)) return;
       cleanupSession(false);
@@ -766,6 +781,7 @@ export function CoachApp() {
   const startCamera = async (requestedFacing = cameraFacingRef.current) => {
     setError(null);
     cleanupSession(false);
+    primeForCameraAction();
     cameraFacingRef.current = requestedFacing;
     setCameraFacing(requestedFacing);
     const requestedMirror = requestedFacing === "user";
@@ -1010,6 +1026,7 @@ export function CoachApp() {
 
   function finishSession(nextState: "idle" | "complete" = "idle") {
     sourceEpochRef.current += 1;
+    stopSessionAssistance();
     processingRef.current = false;
     frameCaptureInFlightRef.current = false;
     calibratingRef.current = false;
@@ -1074,27 +1091,61 @@ export function CoachApp() {
     setTrackingLatencyMs(null);
   }
 
-  const beginCalibration = () => {
+  function beginCalibrationForCurrentContext(): void {
     setError(null);
-    if (sourceState !== "active") {
+    cancelGuidedSetup();
+    if (!processingRef.current || !sourceKindRef.current || sourceKindRef.current === "image") {
       setError("Start the camera or choose a video before calibrating.");
       return;
     }
-    if (!isViewSupported(mode, view)) {
-      setError(unsupportedViewFeedback(mode, view).body);
+    const currentMode = modeRef.current;
+    const currentView = viewRef.current;
+    const currentMirror = mirroredRef.current;
+    if (!isViewSupported(currentMode, currentView)) {
+      setError(unsupportedViewFeedback(currentMode, currentView).body);
       setResult(null);
       return;
     }
     invalidateInferenceContext();
-    const window = new CalibrationWindow(mode, view, mirrored);
+    const window = new CalibrationWindow(currentMode, currentView, currentMirror);
     calibrationRef.current = window;
     calibratingRef.current = true;
     calibrationStableRef.current = false;
-    engineRef.current.setMode(mode);
+    engineRef.current.setMode(currentMode);
     engineRef.current.setCalibrationStable(false);
-    setCalibration(createCalibrationProfile(mode, view, mirrored));
+    setCalibration(createCalibrationProfile(currentMode, currentView, currentMirror));
     setCalibrating(true);
     setResult(null);
+  }
+
+  const beginCalibration = () => beginCalibrationForCurrentContext();
+
+  function startGuidedSetupForCamera(): void {
+    if (
+      sourceKindRef.current !== "camera" ||
+      !processingRef.current ||
+      calibrationStableRef.current ||
+      !isViewSupported(modeRef.current, viewRef.current) ||
+      !startGuidedSetup()
+    ) {
+      return;
+    }
+    calibratingRef.current = false;
+    calibrationStableRef.current = false;
+    calibrationRef.current?.reset();
+    engineRef.current.setCalibrationStable(false);
+    setCalibration(createCalibrationProfile(modeRef.current, viewRef.current, mirroredRef.current));
+    setCalibrating(false);
+    setResult(null);
+  }
+
+  const toggleGuidedSetup = () => {
+    const next = !guidedSetupEnabled;
+    setGuidedSetupEnabled(next);
+    if (next && sourceKindRef.current === "camera" && processingRef.current) {
+      primeForCameraAction();
+      startGuidedSetupForCamera();
+    }
   };
 
   const changeMode = (nextMode: AnalysisMode) => {
@@ -1110,6 +1161,7 @@ export function CoachApp() {
     setCalibration(createCalibrationProfile(nextMode, viewRef.current, mirroredRef.current));
     setCalibrating(false);
     setResult(null);
+    startGuidedSetupForCamera();
   };
 
   function rotateSession(nextMode: AnalysisMode) {
@@ -1141,6 +1193,7 @@ export function CoachApp() {
     setCalibration(createCalibrationProfile(modeRef.current, nextView, mirroredRef.current));
     setCalibrating(false);
     setResult(null);
+    startGuidedSetupForCamera();
   };
 
   const toggleMirror = () => {
@@ -1155,6 +1208,7 @@ export function CoachApp() {
     setCalibration(createCalibrationProfile(modeRef.current, viewRef.current, next));
     setCalibrating(false);
     setResult(null);
+    startGuidedSetupForCamera();
   };
 
   function cleanupSession(resetSource = true) {
@@ -1324,6 +1378,19 @@ export function CoachApp() {
                   <span className="full-body-guide-feet" />
                 </div>
               )}
+              {guidedSetupSeconds !== null && (
+                <div
+                  className="guided-setup-countdown"
+                  role="status"
+                  aria-live="assertive"
+                  aria-atomic="true"
+                  data-baseline-samples={calibration.sampleCount}
+                >
+                  <span>Guided setup</span>
+                  <strong>{guidedSetupSeconds}</strong>
+                  <p>Step back. Keep head and feet visible. Stand naturally.</p>
+                </div>
+              )}
               <PoseCanvas
                 landmarks={landmarks}
                 mirrored={mirrored}
@@ -1439,23 +1506,54 @@ export function CoachApp() {
                   {mirrored ? " On; landmark labels stay anatomical" : " Off"}
                 </span>
               </label>
+              <label className="calibration-row">
+                <input
+                  className="hidden-input"
+                  type="checkbox"
+                  checked={guidedSetupEnabled}
+                  onChange={toggleGuidedSetup}
+                />
+                <span className="calibration-icon" aria-hidden="true">
+                  5
+                </span>
+                <span>
+                  <strong>Guided camera setup</strong>
+                  {guidedSetupEnabled
+                    ? " On; five-second visual and local-tone countdown"
+                    : " Off; start calibration manually"}
+                </span>
+              </label>
               <div className="calibration-row" aria-live="polite">
                 <span className="calibration-icon" aria-hidden="true">
-                  {calibrating ? "…" : calibration.stable ? "✓" : "○"}
+                  {guidedSetupSeconds !== null
+                    ? guidedSetupSeconds
+                    : calibrating
+                      ? "…"
+                      : calibration.stable
+                        ? "✓"
+                        : "○"}
                 </span>
                 <span>
                   <strong>
-                    {calibrating
-                      ? `Calibrating ${calibration.sampleCount}/${CALIBRATION_SAMPLE_TARGET}`
-                      : calibration.stable
-                        ? "Calibration ready"
-                        : "Calibration needed"}
+                    {guidedSetupSeconds !== null
+                      ? `Calibration starts in ${guidedSetupSeconds}`
+                      : calibrating
+                        ? calibration.sampleCount >= CALIBRATION_SAMPLE_TARGET
+                          ? "Checking steadiness"
+                          : `Calibrating ${calibration.sampleCount}/${CALIBRATION_SAMPLE_TARGET}`
+                        : calibration.stable
+                          ? "Calibration ready"
+                          : "Calibration needed"}
                   </strong>
-                  {calibrating
-                    ? mode === "standing"
-                      ? " Stand naturally; do not force alignment"
-                      : " Hold a relaxed position"
-                    : " View-specific baseline"}
+                  {guidedSetupSeconds !== null
+                    ? " Leave the controls and settle inside the full-body guide"
+                    : calibrating
+                      ? calibration.sampleCount >= CALIBRATION_SAMPLE_TARGET
+                        ? " Hold a relaxed position; baseline waits for a stable window"
+                        : mode === "standing"
+                          ? " Stand naturally; do not force alignment"
+                          : " Hold a relaxed position"
+                      : " View-specific baseline"}
                 </span>
               </div>
               {!viewSupported && (
@@ -1467,11 +1565,13 @@ export function CoachApp() {
                 {(sourceState === "active" || sourceState === "loading") &&
                 sourceKind !== "image" ? (
                   <button className="button-primary" type="button" onClick={beginCalibration}>
-                    {calibrating
-                      ? "Calibrating…"
-                      : calibration.stable
-                        ? "Recalibrate"
-                        : "Calibrate"}
+                    {guidedSetupSeconds !== null
+                      ? `Calibrate now · ${guidedSetupSeconds}s`
+                      : calibrating
+                        ? "Calibrating…"
+                        : calibration.stable
+                          ? "Recalibrate"
+                          : "Calibrate"}
                   </button>
                 ) : (
                   <button
@@ -1504,7 +1604,11 @@ export function CoachApp() {
                   </button>
                 )}
               </div>
-              <DeviceReadiness cameraRuntime={cameraRuntime} cameraMuted={cameraMuted} />
+              <DeviceReadiness
+                cameraRuntime={cameraRuntime}
+                cameraMuted={cameraMuted}
+                wakeLockState={wakeLockState}
+              />
             </aside>
           </div>
 

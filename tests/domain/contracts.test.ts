@@ -97,6 +97,33 @@ describe("temporal smoothing and calibration", () => {
     expect(window.add(makeObservation()).sampleCount).toBe(1);
   });
 
+  it("rejects a desk baseline while head and shoulders are moving", () => {
+    const window = new CalibrationWindow("desk", "side", false, 4);
+    let profile = window.add(makeObservation());
+    for (let index = 1; index < 4; index += 1) {
+      const headShift = index % 2 === 0 ? 0.08 : -0.08;
+      profile = window.add(
+        makeObservation({
+          timestampMs: index * 40,
+          sequence: index,
+          landmarks: makeLandmarks({
+            nose: { x: 0.51 + headShift },
+            leftEar: { x: 0.47 + headShift },
+            rightEar: { x: 0.55 + headShift },
+            leftShoulder: { y: 0.43 + headShift / 2 },
+          }),
+        }),
+      );
+    }
+    expect(profile.stable).toBe(false);
+    expect(profile.sampleCount).toBe(4);
+
+    for (let index = 4; index < 8; index += 1) {
+      profile = window.add(makeObservation({ timestampMs: index * 40, sequence: index }));
+    }
+    expect(profile.stable).toBe(true);
+  });
+
   it("uses the mobile-safe default calibration target", () => {
     const window = new CalibrationWindow("desk", "side", false);
     let result = window.add(makeObservation());

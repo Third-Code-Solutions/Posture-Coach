@@ -6,6 +6,7 @@ describe("browser capability gating", () => {
     const ready = {
       secureContext: true,
       cameraApi: true,
+      screenWakeLock: true,
       worker: true,
       workerCanvas2d: true,
       imageBitmap: true,

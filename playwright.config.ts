@@ -1,7 +1,14 @@
+import path from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 
 const port = process.env.PLAYWRIGHT_PORT ?? "3010";
 const origin = `http://127.0.0.1:${port}`;
+const chromeFakeCameraArgs = [
+  "--use-fake-device-for-media-stream",
+  `--use-file-for-fake-video-capture=${path
+    .resolve("output/playwright/fixtures/pose-camera.y4m")
+    .replaceAll("\\", "/")}`,
+];
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -25,12 +32,25 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
-      use: { ...devices["Desktop Chrome"], channel: "chrome" },
+      use: {
+        ...devices["Desktop Chrome"],
+        channel: "chrome",
+        permissions: ["camera"],
+        launchOptions: { args: chromeFakeCameraArgs },
+      },
     },
     {
       name: "firefox",
-      testIgnore: /camera\.spec\.ts/,
-      use: { ...devices["Desktop Firefox"] },
+      use: {
+        ...devices["Desktop Firefox"],
+        launchOptions: {
+          firefoxUserPrefs: {
+            "media.navigator.permission.disabled": true,
+            "media.navigator.streams.fake": true,
+            "media.getusermedia.camera.fake.force": true,
+          },
+        },
+      },
     },
     {
       name: "webkit",
@@ -39,8 +59,12 @@ export default defineConfig({
     },
     {
       name: "mobile-chromium",
-      testIgnore: /camera\.spec\.ts/,
-      use: { ...devices["Pixel 7"] },
+      use: {
+        ...devices["Pixel 7"],
+        channel: "chrome",
+        permissions: ["camera"],
+        launchOptions: { args: chromeFakeCameraArgs },
+      },
     },
     {
       name: "mobile-webkit",

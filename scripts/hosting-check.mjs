@@ -95,6 +95,17 @@ try {
   ) {
     throw new Error("Content-Security-Policy must allow local WebAssembly inference");
   }
+  const permissionsPolicy = rootResponse.headers.get("permissions-policy") ?? "";
+  for (const directive of [
+    "camera=(self)",
+    "screen-wake-lock=(self)",
+    "microphone=()",
+    "geolocation=()",
+  ]) {
+    if (!permissionsPolicy.includes(directive)) {
+      throw new Error(`Permissions-Policy is missing required directive: ${directive}`);
+    }
+  }
 
   const modelResponse = await expectStatus("/models/pose_landmarker_full.task", 200);
   if (modelResponse.headers.get("content-type") !== "application/octet-stream") {

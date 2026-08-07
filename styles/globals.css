@@ -449,6 +449,48 @@ label:has(input:focus-visible) {
   border-bottom: 1px solid rgb(199 184 255 / 0.58);
 }
 
+.guided-setup-countdown {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  padding: 2rem;
+  background: radial-gradient(circle at center, rgb(36 27 61 / 0.5), rgb(36 27 61 / 0.82));
+  color: white;
+  text-align: center;
+  pointer-events: none;
+}
+
+.guided-setup-countdown span {
+  padding: 0.3rem 0.55rem;
+  border: 1px solid rgb(230 224 255 / 0.5);
+  border-radius: 999px;
+  background: rgb(36 27 61 / 0.7);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.guided-setup-countdown strong {
+  margin: 0.45rem 0 0.25rem;
+  color: #fff;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(4.5rem, 17vw, 8rem);
+  font-weight: 400;
+  line-height: 0.95;
+}
+
+.guided-setup-countdown p {
+  max-width: 18rem;
+  margin: 0;
+  color: #f1edff;
+  font-size: clamp(0.78rem, 2vw, 0.92rem);
+  line-height: 1.5;
+}
+
 .preview-canvas {
   z-index: 2;
   pointer-events: none;
@@ -757,6 +799,10 @@ label:has(input:focus-visible) {
   color: var(--ink-muted);
   font-size: 0.7rem;
   line-height: 1.4;
+}
+
+label.calibration-row {
+  cursor: pointer;
 }
 
 .calibration-row strong {

@@ -1,4 +1,3 @@
-import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 
 function captureBrowserFaults(page: Page) {
@@ -13,54 +12,195 @@ function captureBrowserFaults(page: Page) {
   return { pageErrors, consoleErrors };
 }
 
-test.use({
-  permissions: ["camera"],
-  launchOptions: {
-    args: [
-      "--use-fake-device-for-media-stream",
-      `--use-file-for-fake-video-capture=${path
-        .resolve("output/playwright/fixtures/pose-camera.y4m")
-        .replaceAll("\\", "/")}`,
-    ],
-  },
-});
+test("analyzes a fake webcam stream locally", async ({ page, browserName }, testInfo) => {
+  await page.addInitScript(() => {
+    class TestWakeLockSentinel extends EventTarget {
+      released = false;
 
-test("analyzes a fake webcam stream locally", async ({ page }) => {
+      async release() {
+        if (this.released) return;
+        this.released = true;
+        this.dispatchEvent(new Event("release"));
+      }
+    }
+    const sentinels: TestWakeLockSentinel[] = [];
+    const stoppedTracks: MediaStreamTrack[] = [];
+    Object.defineProperty(window, "__testWakeLocks", { value: sentinels });
+    Object.defineProperty(window, "__stoppedCameraTracks", { value: stoppedTracks });
+    const originalStop = MediaStreamTrack.prototype.stop;
+    MediaStreamTrack.prototype.stop = function stop() {
+      stoppedTracks.push(this);
+      originalStop.call(this);
+    };
+    Object.defineProperty(navigator, "wakeLock", {
+      configurable: true,
+      value: {
+        request: async () => {
+          const sentinel = new TestWakeLockSentinel();
+          sentinels.push(sentinel);
+          return sentinel;
+        },
+      },
+    });
+  });
   const faults = captureBrowserFaults(page);
   await page.goto("/");
   const cameraLens = page.getByLabel("Camera lens");
   await expect(cameraLens).toHaveValue("user");
   await page.getByRole("button", { name: "Use webcam" }).click();
   await expect(page.getByText(/camera.*processing on device/i)).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText("Guided setup", { exact: true })).toBeVisible();
+  await expect(page.locator(".guided-setup-countdown")).toHaveAttribute(
+    "data-baseline-samples",
+    "0",
+  );
+  await page.waitForTimeout(500);
+  await expect(page.locator(".guided-setup-countdown")).toHaveAttribute(
+    "data-baseline-samples",
+    "0",
+  );
+  await expect(page.getByText(/Calibrating \d+\/12/)).toHaveCount(0);
   await expect(page.getByText(/Pose Landmarker Full.*local/i)).toBeVisible({ timeout: 15_000 });
-  await page.locator("video").evaluate((video) => {
-    (window as typeof window & { __previousCameraStream?: MediaStream }).__previousCameraStream = (
-      video as HTMLVideoElement
-    ).srcObject as MediaStream;
+  await page.locator(".device-readiness summary").click();
+  await expect(page.getByText(/Screen wake lock active/i)).toBeVisible();
+  await page.evaluate(async () => {
+    const sentinels = (
+      window as typeof window & {
+        __testWakeLocks?: Array<{ release(): Promise<void> }>;
+      }
+    ).__testWakeLocks;
+    await sentinels?.[0]?.release();
   });
-  await cameraLens.selectOption("environment");
-  await expect(cameraLens).toHaveValue("environment");
-  await expect(page.getByRole("checkbox")).not.toBeChecked();
+  await expect(page.getByText(/System released the wake lock/i)).toBeVisible();
+  if (browserName === "chromium") {
+    await page.locator("video").evaluate((video) => {
+      (window as typeof window & { __previousCameraStream?: MediaStream }).__previousCameraStream =
+        (video as HTMLVideoElement).srcObject as MediaStream;
+    });
+    await cameraLens.selectOption("environment");
+    await expect(cameraLens).toHaveValue("environment");
+    await expect(page.getByRole("checkbox", { name: /Mirror preview/ })).not.toBeChecked();
+    await expect
+      .poll(() =>
+        page.locator("video").evaluate((video) => {
+          const testWindow = window as typeof window & {
+            __previousCameraStream?: MediaStream;
+            __stoppedCameraTracks?: MediaStreamTrack[];
+          };
+          const previous = testWindow.__previousCameraStream;
+          const current = (video as HTMLVideoElement).srcObject as MediaStream | null;
+          const previousTracks = previous?.getTracks() ?? [];
+          return Boolean(
+            previous &&
+            current &&
+            current !== previous &&
+            previousTracks.length > 0 &&
+            previousTracks.every(
+              (track) =>
+                track.readyState === "ended" || testWindow.__stoppedCameraTracks?.includes(track),
+            ),
+          );
+        }),
+      )
+      .toBe(true);
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const sentinels = (
+            window as typeof window & { __testWakeLocks?: Array<{ released: boolean }> }
+          ).__testWakeLocks;
+          return Boolean(sentinels && sentinels.length >= 2 && sentinels[0]?.released);
+        }),
+      )
+      .toBe(true);
+    await expect(page.getByText(/Rear camera.*source.*effective/i)).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByText(/Screen wake lock active/i)).toBeVisible();
+    if (testInfo.project.name === "chromium") {
+      await page.getByRole("button", { name: /Calibrate now/ }).click();
+      await expect(page.getByText("Calibration ready")).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByText("Clear", { exact: true })).toBeVisible({ timeout: 15_000 });
+    }
+  }
+  await page.getByRole("button", { name: "Stop session" }).click();
   await expect
     .poll(() =>
-      page.locator("video").evaluate((video) => {
-        const previous = (window as typeof window & { __previousCameraStream?: MediaStream })
-          .__previousCameraStream;
-        const current = (video as HTMLVideoElement).srcObject as MediaStream | null;
-        return Boolean(
-          previous &&
-          current &&
-          current !== previous &&
-          previous.getTracks().every((track) => track.readyState === "ended"),
-        );
+      page.evaluate(() => {
+        const sentinels = (
+          window as typeof window & { __testWakeLocks?: Array<{ released: boolean }> }
+        ).__testWakeLocks;
+        return Boolean(sentinels?.length && sentinels.every((sentinel) => sentinel.released));
       }),
     )
     .toBe(true);
-  await page.locator(".device-readiness summary").click();
-  await expect(page.getByText(/Rear camera.*source.*effective/i)).toBeVisible({ timeout: 15_000 });
-  await page.getByRole("button", { name: "Calibrate" }).click();
-  await expect(page.getByText("Calibration ready")).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByText("Clear", { exact: true })).toBeVisible({ timeout: 15_000 });
+  expect(faults.pageErrors).toEqual([]);
+  expect(faults.consoleErrors).toEqual([]);
+});
+
+test("ends camera session and releases wake lock when page becomes hidden", async ({ page }) => {
+  await page.addInitScript(() => {
+    class TestWakeLockSentinel extends EventTarget {
+      released = false;
+
+      async release() {
+        if (this.released) return;
+        this.released = true;
+        this.dispatchEvent(new Event("release"));
+      }
+    }
+    const sentinels: TestWakeLockSentinel[] = [];
+    Object.defineProperty(window, "__testWakeLocks", { value: sentinels });
+    Object.defineProperty(navigator, "wakeLock", {
+      configurable: true,
+      value: {
+        request: async () => {
+          const sentinel = new TestWakeLockSentinel();
+          sentinels.push(sentinel);
+          return sentinel;
+        },
+      },
+    });
+  });
+  const faults = captureBrowserFaults(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Use webcam" }).click();
+  await expect(page.getByText(/camera.*processing on device/i)).toBeVisible({ timeout: 15_000 });
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const sentinels = (
+          window as typeof window & { __testWakeLocks?: Array<{ released: boolean }> }
+        ).__testWakeLocks;
+        return Boolean(sentinels?.length && !sentinels[0]?.released);
+      }),
+    )
+    .toBe(true);
+
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => "hidden",
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+
+  await expect
+    .poll(() =>
+      page.locator("video").evaluate((video) => (video as HTMLVideoElement).srcObject === null),
+    )
+    .toBe(true);
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const sentinels = (
+          window as typeof window & { __testWakeLocks?: Array<{ released: boolean }> }
+        ).__testWakeLocks;
+        return Boolean(sentinels?.length && sentinels.every((sentinel) => sentinel.released));
+      }),
+    )
+    .toBe(true);
+  await expect(page.locator(".guided-setup-countdown")).toHaveCount(0);
   expect(faults.pageErrors).toEqual([]);
   expect(faults.consoleErrors).toEqual([]);
 });
@@ -71,15 +211,34 @@ test.describe("mobile portrait camera", () => {
     hasTouch: true,
   });
 
-  test("rotates a landscape camera source before preview and inference", async ({ page }) => {
+  test("rotates a landscape camera source before preview and inference", async ({
+    page,
+    browserName,
+  }) => {
+    test.skip(browserName !== "chromium", "Portrait fake-video compositor requires Chrome.");
     const faults = captureBrowserFaults(page);
     await page.goto("/");
     await page.getByLabel("Camera lens").selectOption("environment");
     await page.getByRole("button", { name: "Use webcam" }).click();
     await expect(page.getByText(/camera.*processing on device/i)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("Guided setup", { exact: true })).toBeVisible();
+    await expect(page.locator(".guided-setup-countdown")).toHaveAttribute(
+      "data-baseline-samples",
+      "0",
+    );
+    await page.waitForTimeout(500);
+    await expect(page.locator(".guided-setup-countdown")).toHaveAttribute(
+      "data-baseline-samples",
+      "0",
+    );
+    await expect(page.getByText(/Calibrating \d+\/12/)).toHaveCount(0);
     await expect(page.locator(".portrait-preview-canvas")).toHaveClass(/is-visible/, {
       timeout: 15_000,
     });
+    await expect(page.getByText("Guided setup", { exact: true })).toBeHidden({ timeout: 8_000 });
+    await expect(
+      page.getByText(/Calibrating \d+\/12|Checking steadiness|Calibration ready/),
+    ).toBeVisible({ timeout: 5_000 });
     await page.locator(".device-readiness summary").click();
     await expect(
       page.getByText(/Rear camera.*source, .*effective.*rotated locally/i),
