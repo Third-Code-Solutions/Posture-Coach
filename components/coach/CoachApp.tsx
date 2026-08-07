@@ -1651,14 +1651,21 @@ export function CoachApp() {
               <div className="source-actions">
                 {(sourceState === "active" || sourceState === "loading") &&
                 sourceKind !== "image" ? (
-                  <button className="button-primary" type="button" onClick={beginCalibration}>
-                    {guidedSetupSeconds !== null
-                      ? `Calibrate now · ${guidedSetupSeconds}s`
-                      : calibrating
-                        ? "Calibrating…"
-                        : calibration.stable
-                          ? "Recalibrate"
-                          : "Calibrate"}
+                  <button
+                    className="button-primary"
+                    type="button"
+                    onClick={beginCalibration}
+                    disabled={sourceState === "loading"}
+                  >
+                    {sourceState === "loading"
+                      ? "Preparing video…"
+                      : guidedSetupSeconds !== null
+                        ? `Calibrate now · ${guidedSetupSeconds}s`
+                        : calibrating
+                          ? "Calibrating…"
+                          : calibration.stable
+                            ? "Recalibrate"
+                            : "Calibrate"}
                   </button>
                 ) : (
                   <button

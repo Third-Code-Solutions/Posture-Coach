@@ -233,6 +233,13 @@ test.describe("privacy-first posture coach smoke", () => {
     );
     test.setTimeout(45_000);
     await installWakeLockMock(page);
+    await page.addInitScript(() => {
+      const originalPlay = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = async function () {
+        await new Promise((resolve) => window.setTimeout(resolve, 600));
+        return originalPlay.call(this);
+      };
+    });
     const faults = captureBrowserFaults(page);
     const externalRequests: string[] = [];
     let localOrigin = "";
@@ -246,6 +253,7 @@ test.describe("privacy-first posture coach smoke", () => {
     localOrigin = new URL(page.url()).origin;
     await page.getByLabel("Camera view").selectOption("front");
     await page.locator('input[type="file"]').setInputFiles(poseVideoFixture());
+    await expect(page.getByRole("button", { name: "Preparing video…" })).toBeDisabled();
     await expectLocalPoseEngine(page, browserName);
     await expect
       .poll(() =>
