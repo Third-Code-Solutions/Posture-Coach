@@ -9,7 +9,7 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-Open `http://localhost:3000`. Camera access requires a secure context (`localhost` is allowed) and an explicit click. Uploaded videos and still images are read through local object URLs and revoked when the session stops. Front/rear camera selection stays local; switching lenses releases the previous stream before requesting the next one. On phones, keep device upright; if browser returns landscape frames, app rotates them through a bounded local portrait compositor. A separate inference snapshot keeps preview painting active during asynchronous bitmap capture and dedicated-worker backpressure. The WebKit main-thread compatibility path still shares main-thread frame time with inference.
+Open `http://localhost:3000`. Camera access requires a secure context (`localhost` is allowed) and an explicit click. Uploaded videos and still images are read through local object URLs and revoked when the session stops. Front/rear camera selection stays local; switching lenses releases the previous stream before requesting the next one. On phones, keep device upright; if browser returns landscape frames, app rotates them through a bounded local portrait compositor. A separate inference snapshot keeps preview painting active during asynchronous bitmap capture and dedicated-worker backpressure. WebKit-class browsers without worker Canvas2D transfer a bounded RGBA pixel buffer to the dedicated pose worker; the main-thread inference client is reserved for browsers without workers or a worker that cannot initialize or transfer frames.
 
 Quality gates:
 
@@ -57,6 +57,6 @@ In a second terminal, confirm `http://127.0.0.1:3001/healthz` returns `ok`, then
 
 ## Technical notes
 
-The MediaPipe Pose Landmarker runs in a dedicated worker using the pinned Full model and same-origin Wasm assets. Browsers without worker Canvas2D use a lazy, one-frame-in-flight BlazePose/WASM compatibility client on the main thread. The pure domain engine owns normalization, confidence gating, smoothing, calibration, geometry, movement phases, deterministic feedback, and summaries. Browser-session adapters own guided-setup audio/timing and wake-lock lifecycle; React only binds actions and presents snapshots.
+The MediaPipe Pose Landmarker runs in a dedicated worker using the pinned Full model and same-origin Wasm assets. Browsers with workers but without worker Canvas2D copy a bounded frame into an RGBA buffer on the page, transfer that buffer to the worker, and run BlazePose/WASM there. A resilient wrapper preserves the first frame and falls back to the lazy, one-frame-in-flight main-thread client when worker support is absent, initialization fails, frame transport fails, or the primary worker reports a recoverable inference failure. The pure domain engine owns normalization, confidence gating, smoothing, calibration, geometry, movement phases, deterministic feedback, and summaries. Browser-session adapters own guided-setup audio/timing and wake-lock lifecycle; React only binds actions and presents snapshots.
 
 See [docs/architecture.md](docs/architecture.md), [docs/licensing.md](docs/licensing.md), [docs/measurement-methodology.md](docs/measurement-methodology.md), [docs/production-readiness.md](docs/production-readiness.md), and [tasks/plan.md](tasks/plan.md).

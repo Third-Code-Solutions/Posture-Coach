@@ -53,7 +53,14 @@ export function hasLocalInferenceSupport(capabilities: BrowserCapabilities): boo
 }
 
 export function hasWorkerInferenceSupport(capabilities: BrowserCapabilities): boolean {
-  return capabilities.worker && capabilities.workerCanvas2d;
+  return capabilities.worker;
+}
+
+export type PoseInferenceRoute = "worker-bitmap" | "worker-pixels" | "main-thread";
+
+export function selectPoseInferenceRoute(capabilities: BrowserCapabilities): PoseInferenceRoute {
+  if (!capabilities.worker) return "main-thread";
+  return capabilities.workerCanvas2d ? "worker-bitmap" : "worker-pixels";
 }
 
 export function supportsWorkerCanvas2d(): boolean {

@@ -7,7 +7,7 @@ import { selectPoseDelegate, type PoseDelegate } from "./delegate";
 import { createTfjsPoseDetector, serializeTfjsPose } from "./tfjs-runtime";
 
 const nativeFetch = globalThis.fetch.bind(globalThis);
-const LOCAL_WORKER_RUNTIME_REVISION = "2026-08-06-portrait-realtime";
+const LOCAL_WORKER_RUNTIME_REVISION = "2026-08-08-webkit-pixel-worker";
 
 function isTelemetryRequest(input: RequestInfo | URL): boolean {
   const url = typeof input === "string" ? input : "url" in input ? input.url : input.href;
@@ -182,24 +182,28 @@ workerScope.onmessage = async (event) => {
   }
   try {
     await createLandmarker();
-    const width = request.frame.width;
-    const height = request.frame.height;
+    const width = request.type === "infer" ? request.frame.width : request.width;
+    const height = request.type === "infer" ? request.frame.height : request.height;
+    const input =
+      request.type === "infer"
+        ? request.frame
+        : new ImageData(request.pixels, request.width, request.height);
     if (cpuDetector) {
       const poses = await cpuDetector.estimatePoses(
-        request.frame,
+        input,
         { maxPoses: MEASUREMENT_THRESHOLDS.inference.maximumPoseCount, flipHorizontal: false },
         request.timestampMs,
       );
       emitCpuResult(poses[0], width, height, request.timestampMs, request.sequence);
     } else {
       if (!landmarker) throw new Error("Pose landmarker is unavailable.");
-      const result = landmarker.detectForVideo(request.frame, request.timestampMs);
+      const result = landmarker.detectForVideo(input, request.timestampMs);
       emitResult(result, request.timestampMs, request.sequence);
       result.close();
     }
-    request.frame.close();
+    if (request.type === "infer") request.frame.close();
   } catch (error) {
-    request.frame.close();
+    if (request.type === "infer") request.frame.close();
     workerScope.postMessage({
       type: "error",
       code: "inference",

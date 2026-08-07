@@ -40,16 +40,17 @@ import {
   getInferenceFrameDimensions,
   getPortraitFallbackVideoConstraints,
   getPortraitPreviewFrameDimensions,
-  hasWorkerInferenceSupport,
   getLocalMediaKind,
   isCompactCaptureViewport,
   isPortraitFrame,
   preferPortraitTrack,
   PoseInferenceClient,
   PoseMainThreadClient,
+  ResilientPoseInferenceClient,
   PoseWorkerClient,
   PoseWorkerResponse,
   readBrowserCapabilities,
+  selectPoseInferenceRoute,
 } from "../../src/vision";
 import { evidenceIdsForIssue } from "../../src/knowledge";
 
@@ -474,15 +475,28 @@ export function CoachApp() {
   const ensureWorker = () => {
     if (workerRef.current) return workerRef.current;
     const sourceEpoch = sourceEpochRef.current;
-    const Client = hasWorkerInferenceSupport(readBrowserCapabilities())
-      ? PoseWorkerClient
-      : PoseMainThreadClient;
-    const worker: PoseInferenceClient = new Client({
-      onMessage: (message) => {
+    const route = selectPoseInferenceRoute(readBrowserCapabilities());
+    const options = {
+      onMessage: (message: PoseWorkerResponse) => {
         if (sourceEpoch !== sourceEpochRef.current) return;
         handleWorkerMessage(message);
       },
-    });
+    };
+    const worker: PoseInferenceClient =
+      route === "main-thread"
+        ? new PoseMainThreadClient(options)
+        : new ResilientPoseInferenceClient(
+            options,
+            (clientOptions) =>
+              new PoseWorkerClient({
+                ...clientOptions,
+                frameTransport: route === "worker-bitmap" ? "bitmap" : "pixels",
+              }),
+            (clientOptions) => new PoseMainThreadClient(clientOptions),
+            () => {
+              void retryStillImageFrame(sourceEpoch);
+            },
+          );
     workerRef.current = worker;
     try {
       worker.init();
@@ -493,6 +507,51 @@ export function CoachApp() {
     }
     return worker;
   };
+
+  async function retryStillImageFrame(expectedSourceEpoch: number): Promise<void> {
+    const image = imageRef.current;
+    const token = sourceTokenRef.current;
+    if (
+      expectedSourceEpoch !== sourceEpochRef.current ||
+      sourceKindRef.current !== "image" ||
+      !processingRef.current ||
+      !image ||
+      token?.kind !== "image" ||
+      objectUrlRef.current !== token.url ||
+      image.src !== token.url ||
+      image.naturalWidth <= 0 ||
+      image.naturalHeight <= 0
+    ) {
+      return;
+    }
+    try {
+      const frame = await captureBitmap(image, image.naturalWidth, image.naturalHeight, "image");
+      const worker = workerRef.current;
+      if (
+        expectedSourceEpoch !== sourceEpochRef.current ||
+        sourceTokenRef.current !== token ||
+        imageRef.current !== image ||
+        worker === null
+      ) {
+        frame.close();
+        return;
+      }
+      if (!worker.submit(frame, Math.max(0, performance.now()), sequenceRef.current++)) {
+        throw new Error("The fallback pose engine could not accept the image.");
+      }
+    } catch {
+      if (
+        expectedSourceEpoch !== sourceEpochRef.current ||
+        sourceTokenRef.current !== token ||
+        imageRef.current !== image
+      ) {
+        return;
+      }
+      cleanupSession(false);
+      setSourceState("error");
+      setError("The local pose engine could not retry this image. Nothing was retained.");
+    }
+  }
 
   function invalidateInferenceContext(): void {
     sourceEpochRef.current += 1;

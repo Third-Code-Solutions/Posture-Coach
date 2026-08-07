@@ -9,6 +9,14 @@ export interface RawPoseLandmark {
 export type PoseWorkerRequest =
   | { type: "init"; webgl2Available: boolean; webglAvailable: boolean }
   | { type: "infer"; frame: ImageBitmap; timestampMs: number; sequence: number }
+  | {
+      type: "infer-pixels";
+      pixels: Uint8ClampedArray<ArrayBuffer>;
+      width: number;
+      height: number;
+      timestampMs: number;
+      sequence: number;
+    }
   | { type: "dispose" };
 
 export type PoseWorkerResponse =
@@ -26,7 +34,7 @@ export type PoseWorkerResponse =
     }
   | {
       type: "error";
-      code: "initialization" | "inference" | "disposed";
+      code: "initialization" | "inference" | "transport" | "disposed";
       message: string;
       recoverable: boolean;
     };

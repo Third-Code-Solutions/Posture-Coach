@@ -68,7 +68,7 @@ test.describe("privacy-first posture coach smoke", () => {
     await expect(
       page.getByText(
         browserName === "webkit"
-          ? "Local WASM compatibility path available"
+          ? "Dedicated worker, transferable pixel bridge, and WebAssembly available"
           : "Dedicated worker, ImageBitmap, and WebAssembly available",
       ),
     ).toBeVisible();
@@ -310,8 +310,51 @@ test.describe("privacy-first posture coach smoke", () => {
   test("runs a local image through single-frame pose inference and overlay", async ({
     page,
     browserName,
-  }) => {
+  }, testInfo) => {
     test.setTimeout(30_000);
+    await page.addInitScript(
+      ({ failFirstPixelInference }) => {
+        const testWindow = window as typeof window & {
+          __poseWorkerFrameTransports: string[];
+          __poseWorkerInjectedFailures: number;
+        };
+        Object.defineProperty(testWindow, "__poseWorkerFrameTransports", { value: [] });
+        Object.defineProperty(testWindow, "__poseWorkerInjectedFailures", {
+          value: 0,
+          writable: true,
+        });
+        let shouldFailPixelInference = failFirstPixelInference;
+        const originalPostMessage = Worker.prototype.postMessage;
+        Worker.prototype.postMessage = function postMessage(
+          message: unknown,
+          transferOrOptions?: Transferable[] | StructuredSerializeOptions,
+        ) {
+          const type = (message as { type?: string } | null)?.type;
+          if (type === "infer") testWindow.__poseWorkerFrameTransports.push("bitmap");
+          if (type === "infer-pixels") testWindow.__poseWorkerFrameTransports.push("pixels");
+          if (type === "infer-pixels" && shouldFailPixelInference) {
+            shouldFailPixelInference = false;
+            testWindow.__poseWorkerInjectedFailures += 1;
+            queueMicrotask(() => {
+              this.onmessage?.call(
+                this,
+                new MessageEvent("message", {
+                  data: {
+                    type: "error",
+                    code: "inference",
+                    message: "Simulated recoverable worker inference failure.",
+                    recoverable: true,
+                  },
+                }),
+              );
+            });
+            return;
+          }
+          Reflect.apply(originalPostMessage, this, [message, transferOrOptions]);
+        };
+      },
+      { failFirstPixelInference: testInfo.project.name === "mobile-webkit" },
+    );
     const faults = captureBrowserFaults(page);
     const externalRequests: string[] = [];
     let localOrigin = "";
@@ -353,6 +396,18 @@ test.describe("privacy-first posture coach smoke", () => {
       return count;
     });
     expect(overlayPixels).toBeGreaterThan(0);
+    const workerFrameTransports = await page.evaluate(
+      () =>
+        (window as typeof window & { __poseWorkerFrameTransports: string[] })
+          .__poseWorkerFrameTransports,
+    );
+    expect(workerFrameTransports).toContain(browserName === "webkit" ? "pixels" : "bitmap");
+    const workerInjectedFailures = await page.evaluate(
+      () =>
+        (window as typeof window & { __poseWorkerInjectedFailures: number })
+          .__poseWorkerInjectedFailures,
+    );
+    expect(workerInjectedFailures).toBe(testInfo.project.name === "mobile-webkit" ? 1 : 0);
     expect(externalRequests).toEqual([]);
     expect(faults.pageErrors).toEqual([]);
     expect(faults.consoleErrors).toEqual([]);

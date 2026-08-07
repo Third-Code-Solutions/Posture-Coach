@@ -6,20 +6,27 @@
 camera / local video / still image
         |
         v
-video or image element -> ImageBitmap -> capability route
-                                      |                |
-                         worker Canvas2D available?     no
-                                      |                |
-                                      v                v
-                           dedicated worker     main-thread compatibility path
-                              |        |                |
-                         WebGL yes     no WebGL         |
-                              |        |                |
-                              v        v                v
-                       MediaPipe     BlazePose TFJS / WASM CPU
-                              \___________|____________/
-                                          |
-                                          v
+video or image element -> bounded ImageBitmap -> capability route
+                                                    |
+                                          Worker available?
+                                           /              \
+                                         no                yes
+                                         |                  |
+                                         |         worker Canvas2D available?
+                                         |             /             \
+                                         |           yes              no
+                                         |            |                |
+                                         |    transfer ImageBitmap   page Canvas2D reads RGBA
+                                         |            |                |
+                                         |            |           transfer ArrayBuffer
+                                         |            |                |
+                                         v            v                v
+                                  main-thread      dedicated worker  dedicated worker
+                                  BlazePose/WASM   MediaPipe or      BlazePose/WASM
+                                                   BlazePose/WASM
+                                         \____________|_______________/
+                                                      |
+                                                      v
                        raw landmarks -> normalization -> confidence gate
                                           |
                   smoothing -> calibration/view gate -> geometry -> mode evaluator
@@ -39,9 +46,9 @@ The evaluator uses required-landmark gates, camera-view declarations, calibratio
 
 The current browser surface shows one cue at a time, keeps camera activation behind a user action, and disposes tracks, workers, callbacks, object URLs, and transferred frames on session exit.
 
-Dedicated-worker inference remains preferred. WebKit builds that expose `ImageBitmap` and WebAssembly but cannot create a worker `OffscreenCanvasRenderingContext2D` use a one-frame-in-flight main-thread BlazePose/WASM compatibility client. The heavy model stays lazy-loaded, all assets remain same-origin, and the client still drops work instead of queueing stale frames.
+Dedicated-worker inference remains preferred. WebKit builds that expose workers, `ImageBitmap`, and WebAssembly but cannot create a worker `OffscreenCanvasRenderingContext2D` read one bounded RGBA frame through page Canvas2D and transfer its `ArrayBuffer` to a dedicated BlazePose/WASM worker. A resilient client holds at most the first frame while that worker initializes and switches to the lazy main-thread client if worker initialization, frame transport, or recoverable primary inference fails. A synchronous transport failure preserves the current frame for the fallback; an asynchronous worker-channel or inference failure switches routes before accepting the next bounded frame. If that transferred frame came from a still image and no newer frame exists, the source adapter performs one epoch-guarded recapture after fallback readiness. The heavy model stays lazy-loaded, all assets remain same-origin, and every route drops work instead of queueing stale frames.
 
-Camera constraints prefer portrait dimensions and preserve selected front/rear lens through preferred, reduced-resolution, and unconstrained fallbacks. Switching lenses stops the prior stream before requesting another. Front preview mirrors by default; rear preview does not, while canonical anatomical labels stay unchanged. When a compact or touch device still reports a landscape camera track, the client rotates frames into a portrait canvas locally before both preview and inference. That compositor preserves aspect ratio and caps its longest edge at 960px. It copies accepted inference frames into a separate bounded canvas, so asynchronous bitmap capture cannot mutate or freeze the displayed canvas. On the dedicated-worker path it paints each new camera frame before checking inference backpressure, so worker inference cadence does not freeze the preview. The WebKit main-thread compatibility path still shares main-thread frame time with inference. Inference bitmaps start at a 720px longest-edge budget and can step to 576px or 480px after sustained capture-to-result latency; normalized landmark geometry remains aligned to the effective portrait source dimensions. Browsers without `createImageBitmap` resize options scale through a bounded local canvas instead of submitting full-resolution frames.
+Camera constraints prefer portrait dimensions and preserve selected front/rear lens through preferred, reduced-resolution, and unconstrained fallbacks. Switching lenses stops the prior stream before requesting another. Front preview mirrors by default; rear preview does not, while canonical anatomical labels stay unchanged. When a compact or touch device still reports a landscape camera track, the client rotates frames into a portrait canvas locally before both preview and inference. That compositor preserves aspect ratio and caps its longest edge at 960px. It copies accepted inference frames into a separate bounded canvas, so asynchronous bitmap capture cannot mutate or freeze the displayed canvas. On successful dedicated-worker routes it paints each new camera frame before checking inference backpressure, so model cadence does not freeze the preview. The WebKit pixel bridge performs one bounded synchronous readback per accepted frame but keeps model inference in the worker. The ultimate main-thread inference fallback still shares main-thread frame time with inference. Inference bitmaps start at a 720px longest-edge budget and can step to 576px or 480px after sustained capture-to-result latency; normalized landmark geometry remains aligned to the effective portrait source dimensions. Browsers without `createImageBitmap` resize options scale through a bounded local canvas instead of submitting full-resolution frames.
 
 Camera sessions enter guided setup before calibration: a five-second visual/local-tone countdown accepts no baseline samples, then starts the existing confidence-gated calibration window. Desk calibration requires stable torso distance, head offset, shoulder level, and trunk lean across the accepted window. Countdown timers, generated-audio context, and optional screen wake lock are released on every source/session exit.
 
@@ -51,7 +58,7 @@ Standing mode is a separate stationary evaluator. It requires head-to-ankle land
 
 The worker also short-circuits the optional ODML telemetry request bundled by the MediaPipe runtime. The model and Wasm load from the app origin; runtime network validation showed only same-origin assets and the local upload object URL.
 
-When a worker-capable page cannot create either WebGL 2 or WebGL 1, the worker does not start MediaPipe's WebGL-backed image upload path. It loads the vendored BlazePose Full TFJS model and WASM binaries from same-origin assets instead, preserving the 33-keypoint contract while trading throughput for compatibility. GPU-capable worker paths keep MediaPipe. Browsers without worker Canvas2D use the same BlazePose/WASM contract on the main thread.
+When a worker-capable page cannot create either WebGL 2 or WebGL 1, the worker does not start MediaPipe's WebGL-backed image upload path. It loads the vendored BlazePose Full TFJS model and WASM binaries from same-origin assets instead, preserving the 33-keypoint contract while trading throughput for compatibility. GPU-capable worker paths keep MediaPipe. Browsers without worker Canvas2D use the transferable pixel bridge and the same worker-side BlazePose/WASM contract. Browsers without worker support, or whose worker cannot initialize, retain the equivalent main-thread fallback.
 
 Uploaded-video `ended` events stop the frame loop, dispose the worker, and retain only aggregate in-memory session summary data for the completed view. Still images run one inference, retain only their overlay state, and do not fabricate movement or repetition results. Refresh or stop clears the media source and object URL.
 

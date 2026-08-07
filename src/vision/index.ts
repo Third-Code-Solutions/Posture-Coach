@@ -7,4 +7,5 @@ export * from "./delegate";
 export * from "./capabilities";
 export * from "./inference-client";
 export * from "./main-thread-client";
+export * from "./resilient-inference-client";
 export * from "./adaptive-inference";

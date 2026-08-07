@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 import {
   hasLocalInferenceSupport,
-  hasWorkerInferenceSupport,
   readBrowserCapabilities,
+  selectPoseInferenceRoute,
 } from "../../src/vision";
 import type { BrowserCapabilities, CameraRuntimeInfo, FrameDimensions } from "../../src/vision";
 import type { InferenceQualityProfile } from "../../src/vision";
@@ -77,9 +77,11 @@ export function DeviceReadiness({
             label="Local pose engine"
             detail={
               hasLocalInferenceSupport(capabilities)
-                ? hasWorkerInferenceSupport(capabilities)
+                ? selectPoseInferenceRoute(capabilities) === "worker-bitmap"
                   ? "Dedicated worker, ImageBitmap, and WebAssembly available"
-                  : "Local WASM compatibility path available"
+                  : selectPoseInferenceRoute(capabilities) === "worker-pixels"
+                    ? "Dedicated worker, transferable pixel bridge, and WebAssembly available"
+                    : "Local main-thread WASM compatibility path available"
                 : "Browser lacks one local inference capability"
             }
             ready={hasLocalInferenceSupport(capabilities)}

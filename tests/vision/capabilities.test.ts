@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { hasLocalInferenceSupport, hasWorkerInferenceSupport } from "../../src/vision/capabilities";
+import {
+  hasLocalInferenceSupport,
+  hasWorkerInferenceSupport,
+  selectPoseInferenceRoute,
+} from "../../src/vision/capabilities";
 
 describe("browser capability gating", () => {
   it("keeps local inference available without worker Canvas2D", () => {
@@ -20,6 +24,10 @@ describe("browser capability gating", () => {
     expect(hasLocalInferenceSupport({ ...ready, worker: false })).toBe(true);
     expect(hasLocalInferenceSupport({ ...ready, webgl2: false, webgl: false })).toBe(true);
     expect(hasWorkerInferenceSupport(ready)).toBe(true);
-    expect(hasWorkerInferenceSupport({ ...ready, workerCanvas2d: false })).toBe(false);
+    expect(hasWorkerInferenceSupport({ ...ready, workerCanvas2d: false })).toBe(true);
+    expect(hasWorkerInferenceSupport({ ...ready, worker: false })).toBe(false);
+    expect(selectPoseInferenceRoute(ready)).toBe("worker-bitmap");
+    expect(selectPoseInferenceRoute({ ...ready, workerCanvas2d: false })).toBe("worker-pixels");
+    expect(selectPoseInferenceRoute({ ...ready, worker: false })).toBe("main-thread");
   });
 });
