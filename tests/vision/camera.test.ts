@@ -7,6 +7,7 @@ import {
   isCompactCaptureViewport,
   isPortraitFrame,
   PORTRAIT_CAMERA_ASPECT_RATIO,
+  preferPortraitTrack,
 } from "../../src/vision/camera";
 
 describe("camera capture constraints", () => {
@@ -32,6 +33,32 @@ describe("camera capture constraints", () => {
       video: expected,
     });
     expect(getPortraitVideoConstraints()).toEqual(expected);
+  });
+
+  it("preserves rear-camera selection through preferred and fallback constraints", () => {
+    expect(getCameraConstraints({ width: 390, height: 844 }, "environment")).toMatchObject({
+      audio: false,
+      video: { facingMode: { ideal: "environment" } },
+    });
+    expect(getPortraitVideoConstraints("environment")).toMatchObject({
+      facingMode: { ideal: "environment" },
+    });
+    expect(getPortraitFallbackVideoConstraints("environment")).toMatchObject({
+      facingMode: { ideal: "environment" },
+    });
+  });
+
+  it("keeps requested lens while tightening an active track to portrait", async () => {
+    let applied: MediaTrackConstraints | undefined;
+    const track = {
+      applyConstraints: async (constraints: MediaTrackConstraints) => {
+        applied = constraints;
+      },
+      getSettings: () => ({ width: 720, height: 1280, facingMode: "environment" }),
+    } as unknown as MediaStreamTrack;
+
+    await expect(preferPortraitTrack(track, "environment")).resolves.toBe(true);
+    expect(applied).toMatchObject({ facingMode: { ideal: "environment" } });
   });
 
   it("recognizes portrait and square source frames", () => {

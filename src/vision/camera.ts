@@ -3,6 +3,8 @@ export interface CaptureViewport {
   height: number;
 }
 
+export type CameraFacingMode = "user" | "environment";
+
 export const PORTRAIT_CAMERA_ASPECT_RATIO = 9 / 16;
 export const MAX_INFERENCE_FRAME_DIMENSION = 720;
 
@@ -27,9 +29,11 @@ export function isCompactCaptureViewport(viewport: CaptureViewport): boolean {
   return Math.min(width, height) <= 700;
 }
 
-export function getPortraitVideoConstraints(): MediaTrackConstraints {
+export function getPortraitVideoConstraints(
+  facingMode: CameraFacingMode = "user",
+): MediaTrackConstraints {
   return {
-    facingMode: { ideal: "user" },
+    facingMode: { ideal: facingMode },
     width: { ideal: 720, min: 480, max: 1080 },
     height: { ideal: 1280, min: 480, max: 1920 },
     aspectRatio: { ideal: PORTRAIT_CAMERA_ASPECT_RATIO },
@@ -43,9 +47,11 @@ export function getPortraitVideoConstraints(): MediaTrackConstraints {
  * browser returns landscape frames, so this fallback must keep portrait as an
  * explicit preference instead of dropping to an unconstrained stream.
  */
-export function getPortraitFallbackVideoConstraints(): MediaTrackConstraints {
+export function getPortraitFallbackVideoConstraints(
+  facingMode: CameraFacingMode = "user",
+): MediaTrackConstraints {
   return {
-    facingMode: { ideal: "user" },
+    facingMode: { ideal: facingMode },
     width: { ideal: 480 },
     height: { ideal: 854 },
     aspectRatio: { ideal: PORTRAIT_CAMERA_ASPECT_RATIO },
@@ -53,11 +59,14 @@ export function getPortraitFallbackVideoConstraints(): MediaTrackConstraints {
   };
 }
 
-export function getCameraConstraints(viewport: CaptureViewport): MediaStreamConstraints {
+export function getCameraConstraints(
+  viewport: CaptureViewport,
+  facingMode: CameraFacingMode = "user",
+): MediaStreamConstraints {
   void viewport;
   return {
     audio: false,
-    video: getPortraitVideoConstraints(),
+    video: getPortraitVideoConstraints(facingMode),
   };
 }
 
@@ -87,9 +96,12 @@ export function getInferenceFrameDimensions(
   };
 }
 
-export async function preferPortraitTrack(track: MediaStreamTrack): Promise<boolean> {
+export async function preferPortraitTrack(
+  track: MediaStreamTrack,
+  facingMode: CameraFacingMode = "user",
+): Promise<boolean> {
   try {
-    await track.applyConstraints(getPortraitVideoConstraints());
+    await track.applyConstraints(getPortraitVideoConstraints(facingMode));
     const settings = track.getSettings();
     return isPortraitFrame(settings.width ?? 0, settings.height ?? 0);
   } catch {

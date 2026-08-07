@@ -70,7 +70,7 @@ Chrome’s first-party camera documentation describes selecting front/rear camer
 
 Chrome-specific implications:
 
-- Keep `facingMode: { ideal: "user" }` as a preference, but expose a camera-switching/reconnect path if rear-camera use becomes a product requirement. The browser may choose a source that satisfies the full constraint set rather than the developer’s first preference.
+- Front/rear selection is now a product requirement. Preserve selected `facingMode` through every constraint fallback, show actual browser-selected lens when available, and stop old tracks before reconnecting. The browser may still choose a source that satisfies the full constraint set rather than the developer’s first preference.
 - Chrome Android does not use automatic fullscreen for ordinary video the way iPhone historically did; Chrome’s `playsInline` documentation still supports retaining the attribute for cross-browser parity. [Chrome for Developers: Media updates in Chrome 75](https://developer.chrome.com/blog/media-updates-in-chrome-75/)
 - Do not make `MediaStreamTrackProcessor`, `VideoFrame`, WebCodecs, or worker-side `OffscreenCanvas` a required baseline. Chrome documents those APIs as useful for advanced frame processing, but they have a narrower cross-engine contract than the current canvas/ImageBitmap path. [Chrome for Developers: Video processing with WebCodecs](https://developer.chrome.com/docs/web-platform/best-practices/webcodecs)
 - Test low- and mid-tier Android devices under battery saver and thermal load. A fast desktop Chromium run does not establish sustained pose-worker throughput on a phone.

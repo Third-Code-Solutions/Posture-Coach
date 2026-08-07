@@ -597,7 +597,7 @@ label:has(input:focus-visible) {
 
 .select-control {
   width: 100%;
-  min-height: 2.35rem;
+  min-height: 2.75rem;
   padding: 0 0.65rem;
   border: 1px solid var(--line);
   border-radius: 0.55rem;

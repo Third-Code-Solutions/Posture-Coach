@@ -28,9 +28,36 @@ test.use({
 test("analyzes a fake webcam stream locally", async ({ page }) => {
   const faults = captureBrowserFaults(page);
   await page.goto("/");
+  const cameraLens = page.getByLabel("Camera lens");
+  await expect(cameraLens).toHaveValue("user");
   await page.getByRole("button", { name: "Use webcam" }).click();
   await expect(page.getByText(/camera.*processing on device/i)).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText(/Pose Landmarker Full.*local/i)).toBeVisible({ timeout: 15_000 });
+  await page.locator("video").evaluate((video) => {
+    (window as typeof window & { __previousCameraStream?: MediaStream }).__previousCameraStream = (
+      video as HTMLVideoElement
+    ).srcObject as MediaStream;
+  });
+  await cameraLens.selectOption("environment");
+  await expect(cameraLens).toHaveValue("environment");
+  await expect(page.getByRole("checkbox")).not.toBeChecked();
+  await expect
+    .poll(() =>
+      page.locator("video").evaluate((video) => {
+        const previous = (window as typeof window & { __previousCameraStream?: MediaStream })
+          .__previousCameraStream;
+        const current = (video as HTMLVideoElement).srcObject as MediaStream | null;
+        return Boolean(
+          previous &&
+          current &&
+          current !== previous &&
+          previous.getTracks().every((track) => track.readyState === "ended"),
+        );
+      }),
+    )
+    .toBe(true);
+  await page.locator(".device-readiness summary").click();
+  await expect(page.getByText(/Rear camera.*source.*effective/i)).toBeVisible({ timeout: 15_000 });
   await page.getByRole("button", { name: "Calibrate" }).click();
   await expect(page.getByText("Calibration ready")).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText("Clear", { exact: true })).toBeVisible({ timeout: 15_000 });
@@ -47,13 +74,16 @@ test.describe("mobile portrait camera", () => {
   test("rotates a landscape camera source before preview and inference", async ({ page }) => {
     const faults = captureBrowserFaults(page);
     await page.goto("/");
+    await page.getByLabel("Camera lens").selectOption("environment");
     await page.getByRole("button", { name: "Use webcam" }).click();
     await expect(page.getByText(/camera.*processing on device/i)).toBeVisible({ timeout: 15_000 });
     await expect(page.locator(".portrait-preview-canvas")).toHaveClass(/is-visible/, {
       timeout: 15_000,
     });
     await page.locator(".device-readiness summary").click();
-    await expect(page.getByText(/source, .*effective.*rotated locally/i)).toBeVisible();
+    await expect(
+      page.getByText(/Rear camera.*source, .*effective.*rotated locally/i),
+    ).toBeVisible();
 
     const geometry = await page.evaluate(() => {
       const video = document.querySelector("video");

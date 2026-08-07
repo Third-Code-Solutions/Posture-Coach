@@ -26,6 +26,7 @@ import {
   MIN_OBSERVED_VIEW_CONFIDENCE,
 } from "../../src/domain";
 import {
+  type CameraFacingMode,
   type CameraRuntimeInfo,
   createObservation,
   getCameraConstraints,
@@ -224,6 +225,7 @@ export function CoachApp() {
   const [mode, setMode] = useState<AnalysisMode>("standing");
   const [view, setView] = useState<CameraView>("side");
   const [mirrored, setMirrored] = useState(true);
+  const [cameraFacing, setCameraFacing] = useState<CameraFacingMode>("user");
   const [sourceState, setSourceState] = useState<SourceState>("idle");
   const [sourceKind, setSourceKind] = useState<SourceKind | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -270,6 +272,7 @@ export function CoachApp() {
   const sourceKindRef = useRef<SourceKind | null>(null);
   const viewRef = useRef<CameraView>(view);
   const mirroredRef = useRef(mirrored);
+  const cameraFacingRef = useRef<CameraFacingMode>(cameraFacing);
   const modeRef = useRef<AnalysisMode>(mode);
   const calibratingRef = useRef(false);
   const calibrationStableRef = useRef(false);
@@ -488,7 +491,7 @@ export function CoachApp() {
         effectiveWidth,
         effectiveHeight,
         rotatedLocally: rotateLandscapeCamera,
-        facingMode: settings?.facingMode ?? null,
+        facingMode: settings?.facingMode ?? cameraFacingRef.current,
         frameRate: settings?.frameRate ?? null,
       });
     }
@@ -760,12 +763,15 @@ export function CoachApp() {
     }
   };
 
-  const startCamera = async () => {
+  const startCamera = async (requestedFacing = cameraFacingRef.current) => {
     setError(null);
     cleanupSession(false);
-    setMirrored(true);
-    mirroredRef.current = true;
-    setCalibration(createCalibrationProfile(modeRef.current, viewRef.current, true));
+    cameraFacingRef.current = requestedFacing;
+    setCameraFacing(requestedFacing);
+    const requestedMirror = requestedFacing === "user";
+    setMirrored(requestedMirror);
+    mirroredRef.current = requestedMirror;
+    setCalibration(createCalibrationProfile(modeRef.current, viewRef.current, requestedMirror));
     if (!navigator.mediaDevices?.getUserMedia) {
       setSourceState("error");
       setError(
@@ -797,7 +803,10 @@ export function CoachApp() {
       let stream: MediaStream;
       try {
         stream = await navigator.mediaDevices.getUserMedia(
-          getCameraConstraints({ width: window.innerWidth, height: window.innerHeight }),
+          getCameraConstraints(
+            { width: window.innerWidth, height: window.innerHeight },
+            requestedFacing,
+          ),
         );
       } catch (caught) {
         if (!(caught instanceof DOMException) || caught.name !== "OverconstrainedError") {
@@ -806,7 +815,7 @@ export function CoachApp() {
         try {
           stream = await navigator.mediaDevices.getUserMedia({
             audio: false,
-            video: getPortraitFallbackVideoConstraints(),
+            video: getPortraitFallbackVideoConstraints(requestedFacing),
           });
         } catch (fallbackCaught) {
           if (
@@ -817,7 +826,7 @@ export function CoachApp() {
           }
           stream = await navigator.mediaDevices.getUserMedia({
             audio: false,
-            video: { facingMode: { ideal: "user" } },
+            video: { facingMode: { ideal: requestedFacing } },
           });
         }
       }
@@ -872,8 +881,21 @@ export function CoachApp() {
       if (!video) throw new Error("Preview is not ready.");
       const videoTrack = stream.getVideoTracks()[0];
       if (videoTrack) {
-        await preferPortraitTrack(videoTrack);
-        cameraTrackSettingsRef.current = videoTrack.getSettings();
+        await preferPortraitTrack(videoTrack, requestedFacing);
+        const settings = videoTrack.getSettings();
+        cameraTrackSettingsRef.current = settings;
+        const actualFacing: CameraFacingMode =
+          settings.facingMode === "environment"
+            ? "environment"
+            : settings.facingMode === "user"
+              ? "user"
+              : requestedFacing;
+        cameraFacingRef.current = actualFacing;
+        setCameraFacing(actualFacing);
+        const actualMirror = actualFacing === "user";
+        mirroredRef.current = actualMirror;
+        setMirrored(actualMirror);
+        setCalibration(createCalibrationProfile(modeRef.current, viewRef.current, actualMirror));
       }
       video.srcObject = stream;
       video.autoplay = true;
@@ -894,6 +916,13 @@ export function CoachApp() {
     } finally {
       if (pendingCameraRequestRef.current === requestId) pendingCameraRequestRef.current = null;
     }
+  };
+
+  const changeCameraFacing = (nextFacing: CameraFacingMode) => {
+    if (cameraFacingRef.current === nextFacing) return;
+    cameraFacingRef.current = nextFacing;
+    setCameraFacing(nextFacing);
+    if (sourceKindRef.current === "camera") void startCamera(nextFacing);
   };
 
   const chooseUpload = () => fileInputRef.current?.click();
@@ -1375,6 +1404,26 @@ export function CoachApp() {
                       : "Portrait-first camera request: keep the full body inside the guide area for complete landmark tracking."}
                 </p>
               </div>
+              <div>
+                <label className="control-label" htmlFor="camera-facing-select">
+                  Camera lens
+                </label>
+                <select
+                  id="camera-facing-select"
+                  className="select-control"
+                  value={cameraFacing}
+                  disabled={sourceState === "requesting"}
+                  onChange={(event) => changeCameraFacing(event.target.value as CameraFacingMode)}
+                >
+                  <option value="user">Front camera</option>
+                  <option value="environment">Rear camera</option>
+                </select>
+                <p className="positioning-note">
+                  {cameraFacing === "environment"
+                    ? "Rear camera usually gives a wider full-body view. Switching releases the previous camera first."
+                    : "Front camera keeps setup visible while you step back into the full-body guide."}
+                </p>
+              </div>
               <label className="calibration-row">
                 <input
                   className="hidden-input"
@@ -1386,8 +1435,8 @@ export function CoachApp() {
                   ↔
                 </span>
                 <span>
-                  <strong>Selfie preview</strong>
-                  {mirrored ? " Mirror the preview only" : " Keep the preview unmirrored"}
+                  <strong>Mirror preview</strong>
+                  {mirrored ? " On; landmark labels stay anatomical" : " Off"}
                 </span>
               </label>
               <div className="calibration-row" aria-live="polite">

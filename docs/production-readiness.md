@@ -8,6 +8,7 @@ Updated 2026-08-07 for the cross-device production hardening pass.
 - Webcam, uploaded video, still images, landmarks, feedback, and summaries stay in browser memory.
 - MediaPipe Pose Landmarker Full runs in a dedicated worker with same-origin pinned assets when worker Canvas2D is available.
 - GPU delegate is preferred. Local TensorFlow.js WASM BlazePose Full is the no-WebGL worker fallback and the WebKit-compatible main-thread fallback.
+- User can choose front or rear camera. Lens selection survives all constraint fallbacks; active switching releases old tracks before reconnecting.
 - Camera requests prefer portrait constraints. Compact/touch devices receive a local 90-degree portrait compositor when hardware returns landscape frames.
 - Inference frames are resized to a maximum 720px longest edge. Preview and overlay retain effective source dimensions, so resizing does not crop full-body framing.
 - Coach output is educational visible-form guidance. It abstains on missing landmarks, low confidence, unsupported view, stale frames, invalid geometry, calibration mismatch, or framing drift.
@@ -16,7 +17,7 @@ Updated 2026-08-07 for the cross-device production hardening pass.
 
 1. Load static app over HTTPS.
 2. Inspect device readiness.
-3. Select mode and camera view.
+3. Select mode, camera view, and front/rear lens.
 4. Start webcam or choose local video/image.
 5. Keep one full body visible inside portrait guide.
 6. Calibrate relaxed baseline.
@@ -39,7 +40,7 @@ Local gates required before release:
 
 2026-08-07 local production-export evidence:
 
-- 59 unit/domain tests passed.
+- 61 unit/domain tests passed.
 - Full Playwright matrix: 51 passed; 6 explicit WebKit local-video codec skips.
 - Desktop Chromium, Firefox, and WebKit smoke: 30 passed; 3 WebKit local-video tests skipped because Playwright WebKit on Windows advertises codecs but rejects every tested local video blob. WebKit still passed real local-image pose inference through the BlazePose/WASM compatibility path.
 - Pixel 7 and iPhone 13 emulation smoke: 19 passed; the same 3 WebKit codec-bound tests skipped.

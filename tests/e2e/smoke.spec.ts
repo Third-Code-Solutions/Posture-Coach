@@ -34,6 +34,9 @@ test.describe("privacy-first posture coach smoke", () => {
       page.getByRole("heading", { name: /Posture practice, with signal/ }),
     ).toBeVisible();
     await expect(page.getByText("Device readiness", { exact: true })).toBeVisible();
+    const cameraLens = page.getByLabel("Camera lens");
+    await expect(cameraLens.locator("option")).toHaveCount(2);
+    await expect(cameraLens).toHaveValue("user");
     await page.getByText("Device readiness", { exact: true }).click();
     await expect(
       page.getByText(
@@ -261,6 +264,7 @@ test.describe("privacy-first posture coach smoke", () => {
       const preview = document.querySelector<HTMLElement>(".preview-wrap");
       const modeButton = document.querySelector<HTMLElement>(".mode-button");
       const sourceActions = document.querySelector<HTMLElement>(".source-actions");
+      const selects = [...document.querySelectorAll<HTMLElement>(".select-control")];
       const video = document.querySelector<HTMLVideoElement>(".preview-video");
       const image = document.querySelector<HTMLImageElement>(".preview-image");
       return {
@@ -269,6 +273,7 @@ test.describe("privacy-first posture coach smoke", () => {
         previewWidth: preview?.getBoundingClientRect().width ?? 0,
         previewHeight: preview?.getBoundingClientRect().height ?? 0,
         modeButtonHeight: modeButton?.getBoundingClientRect().height ?? 0,
+        selectHeights: selects.map((select) => select.getBoundingClientRect().height),
         sourceColumns: sourceActions ? getComputedStyle(sourceActions).gridTemplateColumns : "",
         videoObjectFit: video ? getComputedStyle(video).objectFit : "",
         imageObjectFit: image ? getComputedStyle(image).objectFit : "",
@@ -281,6 +286,7 @@ test.describe("privacy-first posture coach smoke", () => {
     expect(layout.previewHeight).toBeGreaterThan(450);
     expect(layout.previewHeight).toBeGreaterThan(layout.previewWidth);
     expect(layout.modeButtonHeight).toBeGreaterThanOrEqual(44);
+    expect(layout.selectHeights.every((height) => height >= 44)).toBe(true);
     expect(layout.sourceColumns.trim().split(/\s+/)).toHaveLength(1);
     expect(layout.videoObjectFit).toBe("contain");
     expect(layout.imageObjectFit).toBe("contain");

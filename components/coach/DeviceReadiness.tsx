@@ -90,7 +90,7 @@ export function DeviceReadiness({
               detail={
                 cameraMuted
                   ? "Camera track is paused; keep the tab visible or reconnect"
-                  : `${cameraRuntime.rawWidth}×${cameraRuntime.rawHeight} source, ${cameraRuntime.effectiveWidth}×${cameraRuntime.effectiveHeight} effective${cameraRuntime.rotatedLocally ? ", rotated locally" : ""}${cameraRuntime.frameRate ? `, ${Math.round(cameraRuntime.frameRate)} fps` : ""}`
+                  : `${cameraRuntime.facingMode === "environment" ? "Rear" : cameraRuntime.facingMode === "user" ? "Front" : "Selected"} camera, ${cameraRuntime.rawWidth}×${cameraRuntime.rawHeight} source, ${cameraRuntime.effectiveWidth}×${cameraRuntime.effectiveHeight} effective${cameraRuntime.rotatedLocally ? ", rotated locally" : ""}${cameraRuntime.frameRate ? `, ${Math.round(cameraRuntime.frameRate)} fps` : ""}`
               }
               ready={!cameraMuted && cameraRuntime.effectiveHeight >= cameraRuntime.effectiveWidth}
             />
