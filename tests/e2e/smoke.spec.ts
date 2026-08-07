@@ -13,8 +13,20 @@ function captureBrowserFaults(page: Page) {
   return { pageErrors, consoleErrors };
 }
 
+function poseVideoFixture(): string {
+  return path.resolve("output/playwright/fixtures/pose-20s.mp4");
+}
+
+async function expectLocalPoseEngine(page: Page, browserName: string) {
+  const engine = page.getByText(/(?:Pose Landmarker|BlazePose) Full.*local/i);
+  await expect(engine).toBeVisible({ timeout: 30_000 });
+  if (browserName === "webkit") {
+    await expect(engine).toContainText(/BlazePose Full.*CPU.*local/i);
+  }
+}
+
 test.describe("privacy-first posture coach smoke", () => {
-  test("renders all modes and explicit positioning guidance", async ({ page }) => {
+  test("renders all modes and explicit positioning guidance", async ({ page, browserName }) => {
     await page.goto("/");
 
     await expect(page).toHaveTitle(/Third Code Posture/);
@@ -22,6 +34,14 @@ test.describe("privacy-first posture coach smoke", () => {
       page.getByRole("heading", { name: /Posture practice, with signal/ }),
     ).toBeVisible();
     await expect(page.getByText("Device readiness", { exact: true })).toBeVisible();
+    await page.getByText("Device readiness", { exact: true }).click();
+    await expect(
+      page.getByText(
+        browserName === "webkit"
+          ? "Local WASM compatibility path available"
+          : "Dedicated worker, ImageBitmap, and WebAssembly available",
+      ),
+    ).toBeVisible();
     const manifest = await page.request.get("/manifest.webmanifest");
     expect(manifest.status()).toBe(200);
     await expect(manifest.json()).resolves.toMatchObject({
@@ -30,10 +50,12 @@ test.describe("privacy-first posture coach smoke", () => {
     });
     const practiceModes = page.getByRole("listbox", { name: "Practice mode" });
     await expect(practiceModes.getByRole("option")).toHaveCount(7);
-    await expect(page.getByText(/Standing posture \/ Local worker ready on demand/)).toBeVisible();
+    await expect(
+      page.getByText(/Standing posture \/ Local pose engine ready on demand/),
+    ).toBeVisible();
     await practiceModes.getByRole("option", { name: "Plank" }).click();
     await expect(page.getByRole("heading", { name: "Posture studio" })).toBeVisible();
-    await expect(page.getByText(/Plank \/ Local worker ready on demand/)).toBeVisible();
+    await expect(page.getByText(/Plank \/ Local pose engine ready on demand/)).toBeVisible();
     await expect(page.getByText(/Side profile: place the camera/)).toBeVisible();
   });
 
@@ -78,7 +100,14 @@ test.describe("privacy-first posture coach smoke", () => {
     await expect(page.getByRole("status")).toContainText(/supported view/i);
   });
 
-  test("runs a local upload through calibration, overlay, and summary", async ({ page }) => {
+  test("runs a local upload through calibration, overlay, and summary", async ({
+    page,
+    browserName,
+  }) => {
+    test.skip(
+      browserName === "webkit",
+      "Playwright WebKit on Windows advertises codecs but cannot decode local video blobs.",
+    );
     test.setTimeout(45_000);
     const faults = captureBrowserFaults(page);
     const externalRequests: string[] = [];
@@ -92,10 +121,8 @@ test.describe("privacy-first posture coach smoke", () => {
     await page.goto("/");
     localOrigin = new URL(page.url()).origin;
     await page.getByLabel("Camera view").selectOption("front");
-    await page
-      .locator('input[type="file"]')
-      .setInputFiles(path.resolve("output/playwright/fixtures/pose-20s.mp4"));
-    await expect(page.getByText(/Pose Landmarker Full.*local/i)).toBeVisible({ timeout: 15_000 });
+    await page.locator('input[type="file"]').setInputFiles(poseVideoFixture());
+    await expectLocalPoseEngine(page, browserName);
     await page.getByRole("button", { name: "Calibrate" }).click();
     await expect(page.getByText("Calibration ready")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText("Clear", { exact: true })).toBeVisible({ timeout: 15_000 });
@@ -105,19 +132,27 @@ test.describe("privacy-first posture coach smoke", () => {
     expect(faults.consoleErrors).toEqual([]);
   });
 
-  test("blocks calibration when observed and selected views disagree", async ({ page }) => {
+  test("blocks calibration when observed and selected views disagree", async ({
+    page,
+    browserName,
+  }) => {
+    test.skip(
+      browserName === "webkit",
+      "Playwright WebKit on Windows advertises codecs but cannot decode local video blobs.",
+    );
     await page.goto("/");
-    await page
-      .locator('input[type="file"]')
-      .setInputFiles(path.resolve("output/playwright/fixtures/pose-20s.mp4"));
-    await expect(page.getByText(/Pose Landmarker Full.*local/i)).toBeVisible({ timeout: 15_000 });
+    await page.locator('input[type="file"]').setInputFiles(poseVideoFixture());
+    await expectLocalPoseEngine(page, browserName);
     await page.getByRole("button", { name: "Calibrate" }).click();
     await expect(page.locator(".error-note")).toContainText(/observed pose looks front/i, {
       timeout: 15_000,
     });
   });
 
-  test("runs a local image through single-frame pose inference and overlay", async ({ page }) => {
+  test("runs a local image through single-frame pose inference and overlay", async ({
+    page,
+    browserName,
+  }) => {
     test.setTimeout(30_000);
     const faults = captureBrowserFaults(page);
     const externalRequests: string[] = [];
@@ -134,7 +169,7 @@ test.describe("privacy-first posture coach smoke", () => {
     await page
       .locator('input[type="file"]')
       .setInputFiles(path.resolve("output/playwright/fixtures/pose_model.png"));
-    await expect(page.getByText(/Pose Landmarker Full.*local/i)).toBeVisible({ timeout: 15_000 });
+    await expectLocalPoseEngine(page, browserName);
     await expect(page.getByRole("heading", { name: "Pose found in this image" })).toBeVisible({
       timeout: 15_000,
     });
@@ -155,6 +190,52 @@ test.describe("privacy-first posture coach smoke", () => {
     expect(externalRequests).toEqual([]);
     expect(faults.pageErrors).toEqual([]);
     expect(faults.consoleErrors).toEqual([]);
+  });
+
+  test("keeps core keyboard and form semantics accessible", async ({ page, browserName }) => {
+    await page.goto("/");
+    const semantics = await page.evaluate(() => {
+      const ids = [...document.querySelectorAll<HTMLElement>("[id]")].map((element) => element.id);
+      const controls = [
+        ...document.querySelectorAll<HTMLElement>("button, input, select, textarea"),
+      ];
+      const unlabeledControls = controls.filter((control) => {
+        if (control.getAttribute("aria-label") || control.getAttribute("aria-labelledby")) {
+          return false;
+        }
+        if (control.closest("label")) return false;
+        if (control.id && document.querySelector(`label[for="${CSS.escape(control.id)}"]`)) {
+          return false;
+        }
+        return !control.textContent?.trim();
+      });
+      return {
+        htmlLang: document.documentElement.lang,
+        h1Count: document.querySelectorAll("h1").length,
+        mainCount: document.querySelectorAll("main").length,
+        duplicateIds: [...new Set(ids.filter((id, index) => ids.indexOf(id) !== index))],
+        unlabeledControlCount: unlabeledControls.length,
+      };
+    });
+
+    expect(semantics).toEqual({
+      htmlLang: "en",
+      h1Count: 1,
+      mainCount: 1,
+      duplicateIds: [],
+      unlabeledControlCount: 0,
+    });
+    const skipLink = page.getByRole("link", { name: "Skip to posture studio" });
+    if (browserName === "webkit") {
+      // Safari includes links in Tab traversal only when Full Keyboard Access is enabled.
+      await skipLink.focus();
+    } else {
+      await page.keyboard.press("Tab");
+    }
+    await expect(skipLink).toBeFocused();
+    await expect(skipLink).toBeInViewport();
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(/#workspace-title$/);
   });
 
   test("keeps the shell within common viewport widths", async ({ page }) => {
@@ -205,7 +286,14 @@ test.describe("privacy-first posture coach smoke", () => {
     expect(layout.imageObjectFit).toBe("contain");
   });
 
-  test("calibrates every exercise mode through the local upload path", async ({ page }) => {
+  test("calibrates every exercise mode through the local upload path", async ({
+    page,
+    browserName,
+  }) => {
+    test.skip(
+      browserName === "webkit",
+      "Playwright WebKit on Windows advertises codecs but cannot decode local video blobs.",
+    );
     test.setTimeout(120_000);
     const modes = ["Bodyweight squat", "Plank", "Push-up", "Lunge", "Bicep curl"];
     for (const mode of modes) {
@@ -220,10 +308,8 @@ test.describe("privacy-first posture coach smoke", () => {
         continue;
       }
       await page.getByLabel("Camera view").selectOption("front");
-      await page
-        .locator('input[type="file"]')
-        .setInputFiles(path.resolve("output/playwright/fixtures/pose-20s.mp4"));
-      await expect(page.getByText(/Pose Landmarker Full.*local/i)).toBeVisible({ timeout: 15_000 });
+      await page.locator('input[type="file"]').setInputFiles(poseVideoFixture());
+      await expectLocalPoseEngine(page, browserName);
       await page.getByRole("button", { name: "Calibrate" }).click();
       await expect(page.getByText("Calibration ready")).toBeVisible({ timeout: 15_000 });
     }

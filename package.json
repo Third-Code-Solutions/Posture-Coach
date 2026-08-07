@@ -24,6 +24,7 @@
     "test:domain": "vitest run tests/domain --passWithNoTests",
     "test:watch": "vitest",
     "test:e2e": "pnpm build && playwright test",
+    "test:e2e:cross-browser": "pnpm build && playwright test tests/e2e/smoke.spec.ts",
     "test:e2e:ui": "pnpm build && playwright test --ui",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test"
   },

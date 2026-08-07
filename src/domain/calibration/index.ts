@@ -3,6 +3,8 @@ import { isObservedViewCompatible, MIN_OBSERVED_VIEW_CONFIDENCE } from "../contr
 import { assessConfidence } from "../confidence";
 import { angleAt, distance, isFinitePoint, midpoint } from "../geometry";
 
+export const CALIBRATION_SAMPLE_TARGET = 12;
+
 export function createCalibrationProfile(
   mode: AnalysisMode,
   view: CameraView,
@@ -33,7 +35,12 @@ export class CalibrationWindow {
   private observedView: CameraView;
   private viewConfidence = 0;
 
-  constructor(mode: AnalysisMode, view: CameraView, mirroredPreview: boolean, targetSamples = 24) {
+  constructor(
+    mode: AnalysisMode,
+    view: CameraView,
+    mirroredPreview: boolean,
+    targetSamples = CALIBRATION_SAMPLE_TARGET,
+  ) {
     this.mode = mode;
     this.view = view;
     this.mirroredPreview = mirroredPreview;

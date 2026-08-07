@@ -5,3 +5,5 @@ export * from "./media";
 export * from "./camera";
 export * from "./delegate";
 export * from "./capabilities";
+export * from "./inference-client";
+export * from "./main-thread-client";

@@ -22,7 +22,7 @@ pnpm build
 pnpm test:e2e
 ```
 
-`test:e2e` serves the static export on port `3010` and uses the installed Chrome channel, keeping the browser gate isolated from any other local app on port `3000`.
+`test:e2e` serves the static export on port `3010` and runs installed Chrome, Firefox, WebKit, Pixel 7 emulation, and iPhone 13 emulation. Fake-camera tests use the installed Chrome channel because Playwright's bundled Chromium on Windows does not expose the fake capture device. The browser gate remains isolated from any other local app on port `3000`.
 
 ## Hosting readiness
 
@@ -46,11 +46,11 @@ In a second terminal, confirm `http://127.0.0.1:3001/healthz` returns `ok`, then
 - Still images run one local pose pass and show the landmark overlay. Movement coaching and repetition counts require a webcam or video sequence.
 - Evaluation abstains when required landmarks are missing, confidence is low, the view is unsupported, or calibration is not stable.
 - Inference frames are capped at 720px on the longest edge to reduce transfer and CPU/GPU pressure on phones; displayed preview keeps full source framing.
-- The device-readiness panel reports secure context, camera API, worker/ImageBitmap/WebAssembly support, and GPU/WASM fallback status without sending telemetry.
+- The device-readiness panel reports secure context, camera API, local inference capability, worker compatibility, and GPU/WASM fallback status without sending telemetry.
 - Stop if you feel pain. Seek qualified professional help for injury, pain, or rehabilitation.
 
 ## Technical notes
 
-The MediaPipe Pose Landmarker runs in a dedicated worker using the pinned Full model and same-origin Wasm assets. The pure domain engine owns normalization, confidence gating, smoothing, calibration, geometry, movement phases, deterministic feedback, and summaries; React only presents snapshots.
+The MediaPipe Pose Landmarker runs in a dedicated worker using the pinned Full model and same-origin Wasm assets. Browsers without worker Canvas2D use a lazy, one-frame-in-flight BlazePose/WASM compatibility client on the main thread. The pure domain engine owns normalization, confidence gating, smoothing, calibration, geometry, movement phases, deterministic feedback, and summaries; React only presents snapshots.
 
 See [docs/architecture.md](docs/architecture.md), [docs/licensing.md](docs/licensing.md), [docs/production-readiness.md](docs/production-readiness.md), and [tasks/plan.md](tasks/plan.md).

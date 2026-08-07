@@ -1,7 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { hasLocalInferenceSupport, readBrowserCapabilities } from "../../src/vision";
+import {
+  hasLocalInferenceSupport,
+  hasWorkerInferenceSupport,
+  readBrowserCapabilities,
+} from "../../src/vision";
 import type { BrowserCapabilities, CameraRuntimeInfo } from "../../src/vision";
 
 function ReadinessRow({ label, detail, ready }: { label: string; detail: string; ready: boolean }) {
@@ -62,7 +66,9 @@ export function DeviceReadiness({
             label="Local pose engine"
             detail={
               hasLocalInferenceSupport(capabilities)
-                ? "Worker, ImageBitmap, and WebAssembly available"
+                ? hasWorkerInferenceSupport(capabilities)
+                  ? "Dedicated worker, ImageBitmap, and WebAssembly available"
+                  : "Local WASM compatibility path available"
                 : "Browser lacks one local inference capability"
             }
             ready={hasLocalInferenceSupport(capabilities)}

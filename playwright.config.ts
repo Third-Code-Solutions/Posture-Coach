@@ -8,12 +8,13 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : undefined,
+  // Pose models are intentionally large. Parallel model instances create artificial
+  // GPU/CPU contention that no single-user browser session experiences.
+  workers: 1,
   reporter: "list",
   use: {
     baseURL: origin,
     trace: "on-first-retry",
-    channel: "chrome",
   },
   webServer: {
     command: `pnpm exec serve out --single --listen ${port}`,
@@ -24,7 +25,27 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
+      use: { ...devices["Desktop Chrome"], channel: "chrome" },
+    },
+    {
+      name: "firefox",
+      testIgnore: /camera\.spec\.ts/,
+      use: { ...devices["Desktop Firefox"] },
+    },
+    {
+      name: "webkit",
+      testIgnore: /camera\.spec\.ts/,
+      use: { ...devices["Desktop Safari"] },
+    },
+    {
+      name: "mobile-chromium",
+      testIgnore: /camera\.spec\.ts/,
+      use: { ...devices["Pixel 7"] },
+    },
+    {
+      name: "mobile-webkit",
+      testIgnore: /camera\.spec\.ts/,
+      use: { ...devices["iPhone 13"] },
     },
   ],
 });

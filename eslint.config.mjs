@@ -16,6 +16,7 @@ export default defineConfig([
   globalIgnores([
     ".next/**",
     ".next-*/**",
+    ".vercel/**",
     "next-env.d.ts",
     "out/**",
     "node_modules/**",

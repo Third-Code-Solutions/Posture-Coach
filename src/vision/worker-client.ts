@@ -1,16 +1,13 @@
 import type { PoseWorkerRequest, PoseWorkerResponse } from "./protocol";
 import { probeWebglCapabilities } from "./delegate";
+import type { PoseInferenceClient, PoseInferenceClientOptions } from "./inference-client";
 
-export interface PoseWorkerClientOptions {
-  onMessage: (message: PoseWorkerResponse) => void;
-}
-
-export class PoseWorkerClient {
+export class PoseWorkerClient implements PoseInferenceClient {
   private readonly worker: Worker;
   private inFlight = false;
   private disposed = false;
 
-  constructor(options: PoseWorkerClientOptions) {
+  constructor(options: PoseInferenceClientOptions) {
     this.worker = new Worker(new URL("./pose.worker.ts", import.meta.url), { type: "module" });
     this.worker.onmessage = (event: MessageEvent<PoseWorkerResponse>) => {
       if (event.data.type === "result" || event.data.type === "error") this.inFlight = false;

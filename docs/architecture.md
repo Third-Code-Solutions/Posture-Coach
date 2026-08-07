@@ -6,19 +6,24 @@
 camera / local video / still image
         |
         v
-video or image element -> ImageBitmap -> PoseWorkerClient -> dedicated vision worker
-                                                       |
-                              WebGL available? --------+-------- no WebGL
-                                   |                              |
-                                   v                              v
-                         MediaPipe Pose Landmarker       BlazePose TFJS / WASM CPU
-                                   \___________________________/
-                                                       |
-                                                       v
+video or image element -> ImageBitmap -> capability route
+                                      |                |
+                         worker Canvas2D available?     no
+                                      |                |
+                                      v                v
+                           dedicated worker     main-thread compatibility path
+                              |        |                |
+                         WebGL yes     no WebGL         |
+                              |        |                |
+                              v        v                v
+                       MediaPipe     BlazePose TFJS / WASM CPU
+                              \___________|____________/
+                                          |
+                                          v
                        raw landmarks -> normalization -> confidence gate
-                                                       |
+                                          |
                   smoothing -> calibration/view gate -> geometry -> mode evaluator
-                                                       |
+                                          |
                               deterministic priority resolver -> local evidence registry -> React snapshot
 ```
 
@@ -34,13 +39,15 @@ The evaluator uses required-landmark gates, camera-view declarations, calibratio
 
 The current browser surface shows one cue at a time, keeps camera activation behind a user action, and disposes tracks, workers, callbacks, object URLs, and transferred frames on session exit.
 
+Dedicated-worker inference remains preferred. WebKit builds that expose `ImageBitmap` and WebAssembly but cannot create a worker `OffscreenCanvasRenderingContext2D` use a one-frame-in-flight main-thread BlazePose/WASM compatibility client. The heavy model stays lazy-loaded, all assets remain same-origin, and the client still drops work instead of queueing stale frames.
+
 Camera constraints prefer portrait dimensions. When a compact or touch device still reports a landscape camera track, the client rotates frames into a portrait canvas locally before both preview and inference. Inference bitmaps are capped at 720px on the longest edge to reduce mobile transfer and compute pressure; normalized landmark geometry remains aligned to the effective portrait source dimensions.
 
 Standing mode is a separate stationary evaluator. It requires head-to-ankle landmarks, calibrates a relaxed full-body baseline, and uses side-view head/trunk geometry plus front-view shoulder/hip geometry only when the selected view supports that signal. A steady result means the visible landmarks are close to that baseline; it is not a clinical normal/abnormal judgment.
 
 The worker also short-circuits the optional ODML telemetry request bundled by the MediaPipe runtime. The model and Wasm load from the app origin; runtime network validation showed only same-origin assets and the local upload object URL.
 
-When the page cannot create either WebGL 2 or WebGL 1, the worker does not start MediaPipe's WebGL-backed image upload path. It loads the vendored BlazePose Full TFJS model and WASM binaries from same-origin assets instead, preserving the 33-keypoint contract while trading throughput for compatibility. GPU-capable devices keep the MediaPipe path.
+When a worker-capable page cannot create either WebGL 2 or WebGL 1, the worker does not start MediaPipe's WebGL-backed image upload path. It loads the vendored BlazePose Full TFJS model and WASM binaries from same-origin assets instead, preserving the 33-keypoint contract while trading throughput for compatibility. GPU-capable worker paths keep MediaPipe. Browsers without worker Canvas2D use the same BlazePose/WASM contract on the main thread.
 
 Uploaded-video `ended` events stop the frame loop, dispose the worker, and retain only aggregate in-memory session summary data for the completed view. Still images run one inference, retain only their overlay state, and do not fabricate movement or repetition results. Refresh or stop clears the media source and object URL.
 

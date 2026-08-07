@@ -8,6 +8,7 @@ import { PoseCanvas } from "../overlay/PoseCanvas";
 import {
   AnalysisMode,
   CameraView,
+  CALIBRATION_SAMPLE_TARGET,
   CalibrationProfile,
   CalibrationWindow,
   EvaluationResult,
@@ -30,12 +31,16 @@ import {
   getCameraConstraints,
   getInferenceFrameDimensions,
   getPortraitFallbackVideoConstraints,
+  hasWorkerInferenceSupport,
   getLocalMediaKind,
   isCompactCaptureViewport,
   isPortraitFrame,
   preferPortraitTrack,
+  PoseInferenceClient,
+  PoseMainThreadClient,
   PoseWorkerClient,
   PoseWorkerResponse,
+  readBrowserCapabilities,
 } from "../../src/vision";
 import { evidenceIdsForIssue } from "../../src/knowledge";
 
@@ -222,7 +227,7 @@ export function CoachApp() {
   const [sourceState, setSourceState] = useState<SourceState>("idle");
   const [sourceKind, setSourceKind] = useState<SourceKind | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [workerLabel, setWorkerLabel] = useState("Local worker ready on demand");
+  const [workerLabel, setWorkerLabel] = useState("Local pose engine ready on demand");
   const [result, setResult] = useState<EvaluationResult | null>(null);
   const [landmarks, setLandmarks] = useState<FrameObservation["landmarks"] | null>(null);
   const [calibration, setCalibration] = useState<CalibrationProfile>(() =>
@@ -244,7 +249,7 @@ export function CoachApp() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const objectUrlRef = useRef<string | null>(null);
-  const workerRef = useRef<PoseWorkerClient | null>(null);
+  const workerRef = useRef<PoseInferenceClient | null>(null);
   const engineRef = useRef(new PostureEngine());
   const calibrationRef = useRef<CalibrationWindow | null>(null);
   const animationRef = useRef<number | null>(null);
@@ -334,7 +339,7 @@ export function CoachApp() {
     }
     if (message.type === "error") {
       cleanupSession(false);
-      setWorkerLabel("Local worker unavailable");
+      setWorkerLabel("Local pose engine unavailable");
       setError(`${message.message} Nothing was sent off this device.`);
       setSourceState("error");
       return;
@@ -418,7 +423,10 @@ export function CoachApp() {
   const ensureWorker = () => {
     if (workerRef.current) return workerRef.current;
     const sourceEpoch = sourceEpochRef.current;
-    const worker = new PoseWorkerClient({
+    const Client = hasWorkerInferenceSupport(readBrowserCapabilities())
+      ? PoseWorkerClient
+      : PoseMainThreadClient;
+    const worker: PoseInferenceClient = new Client({
       onMessage: (message) => {
         if (sourceEpoch !== sourceEpochRef.current) return;
         handleWorkerMessage(message);
@@ -697,7 +705,7 @@ export function CoachApp() {
       };
       processingRef.current = true;
       setSourceState("active");
-      setWorkerLabel("Loading local pose worker…");
+      setWorkerLabel("Loading local pose engine…");
       ensureWorker();
       if (!sessionStartedRef.current) {
         const startedAt = performance.now();
@@ -731,7 +739,7 @@ export function CoachApp() {
       }
       setSourceSize({ width: image.naturalWidth, height: image.naturalHeight });
       setSourceState("active");
-      setWorkerLabel("Loading local pose worker…");
+      setWorkerLabel("Loading local pose engine…");
       setImageStatus("loading");
       setSessionSummary(null);
       const worker = ensureWorker();
@@ -1049,7 +1057,7 @@ export function CoachApp() {
       return;
     }
     invalidateInferenceContext();
-    const window = new CalibrationWindow(mode, view, mirrored, 18);
+    const window = new CalibrationWindow(mode, view, mirrored);
     calibrationRef.current = window;
     calibratingRef.current = true;
     calibrationStableRef.current = false;
@@ -1389,7 +1397,7 @@ export function CoachApp() {
                 <span>
                   <strong>
                     {calibrating
-                      ? `Calibrating ${calibration.sampleCount}/18`
+                      ? `Calibrating ${calibration.sampleCount}/${CALIBRATION_SAMPLE_TARGET}`
                       : calibration.stable
                         ? "Calibration ready"
                         : "Calibration needed"}

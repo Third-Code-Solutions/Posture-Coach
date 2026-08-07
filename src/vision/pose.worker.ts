@@ -1,9 +1,9 @@
 import { FilesetResolver, PoseLandmarker } from "@mediapipe/tasks-vision";
 import type { PoseLandmarkerResult } from "@mediapipe/tasks-vision";
-import type { Pose } from "@tensorflow-models/pose-detection/dist/types";
 import type { PoseDetector } from "@tensorflow-models/pose-detection/dist/pose_detector";
 import type { PoseWorkerRequest, PoseWorkerResponse } from "./protocol";
 import { selectPoseDelegate, type PoseDelegate } from "./delegate";
+import { createTfjsPoseDetector, serializeTfjsPose } from "./tfjs-runtime";
 
 const nativeFetch = globalThis.fetch.bind(globalThis);
 const LOCAL_WORKER_RUNTIME_REVISION = "2026-08-06-portrait-realtime";
@@ -97,25 +97,7 @@ async function createLandmarker(): Promise<void> {
 }
 
 async function createCpuDetector(): Promise<PoseDetector> {
-  const [tf, wasm, detectorModule] = await Promise.all([
-    import("@tensorflow/tfjs-core"),
-    import("@tensorflow/tfjs-backend-wasm"),
-    import("@tensorflow-models/pose-detection/dist/blazepose_tfjs/detector"),
-  ]);
-  wasm.setWasmPaths(new URL("/tfjs-wasm/", self.location.origin).href);
-  if (!(await tf.setBackend("wasm"))) {
-    throw new Error("The local WASM pose runtime could not start.");
-  }
-  await tf.ready();
-  return detectorModule.load({
-    runtime: "tfjs",
-    modelType: "full",
-    enableSmoothing: true,
-    enableSegmentation: false,
-    smoothSegmentation: true,
-    detectorModelUrl: "/models/blazepose-tfjs/detector/model.json",
-    landmarkModelUrl: "/models/blazepose-tfjs/landmark-full/model.json",
-  });
+  return createTfjsPoseDetector(self.location.origin);
 }
 
 function emitResult(result: PoseLandmarkerResult, timestampMs: number, sequence: number): void {
@@ -140,39 +122,17 @@ function emitResult(result: PoseLandmarkerResult, timestampMs: number, sequence:
   });
 }
 
-function toCpuLandmark(
-  point: Pose["keypoints"][number],
-  width: number,
-  height: number,
-  poseScore: number,
-  world: boolean,
-) {
-  const visibility = point.score ?? poseScore;
-  return {
-    x: world ? point.x : point.x / width,
-    y: world ? point.y : point.y / height,
-    z: world ? (point.z ?? 0) : (point.z ?? 0) / width,
-    visibility,
-    presence: visibility,
-  };
-}
-
 function emitCpuResult(
-  pose: Pose | undefined,
+  pose: Parameters<typeof serializeTfjsPose>[0],
   width: number,
   height: number,
   timestampMs: number,
   sequence: number,
 ): void {
-  const poseScore = pose?.score ?? 0;
+  const serialized = serializeTfjsPose(pose, width, height);
   workerScope.postMessage({
     type: "result",
-    landmarks: pose
-      ? pose.keypoints.map((point) => toCpuLandmark(point, width, height, poseScore, false))
-      : [],
-    worldLandmarks: pose?.keypoints3D
-      ? pose.keypoints3D.map((point) => toCpuLandmark(point, width, height, poseScore, true))
-      : [],
+    ...serialized,
     timestampMs,
     sequence,
   });

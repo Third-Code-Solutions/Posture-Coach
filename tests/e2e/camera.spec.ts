@@ -18,9 +18,9 @@ test.use({
   launchOptions: {
     args: [
       "--use-fake-device-for-media-stream",
-      `--use-file-for-fake-video-capture=${path.resolve(
-        "output/playwright/fixtures/pose-camera.y4m",
-      )}`,
+      `--use-file-for-fake-video-capture=${path
+        .resolve("output/playwright/fixtures/pose-camera.y4m")
+        .replaceAll("\\", "/")}`,
     ],
   },
 });

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   type AnalysisMode,
   assessConfidence,
+  CALIBRATION_SAMPLE_TARGET,
   CalibrationWindow,
   type CameraView,
   LandmarkSmoother,
@@ -31,7 +32,7 @@ function setStableCalibration(
     viewConfidence: 1,
     mirroredPreview: false,
     stable: true,
-    sampleCount: 18,
+    sampleCount: CALIBRATION_SAMPLE_TARGET,
     completedAtMs: 1,
     baseline: {},
   });
@@ -94,6 +95,17 @@ describe("temporal smoothing and calibration", () => {
     expect(result.baseline.torso).toBeGreaterThan(0);
     window.reset();
     expect(window.add(makeObservation()).sampleCount).toBe(1);
+  });
+
+  it("uses the mobile-safe default calibration target", () => {
+    const window = new CalibrationWindow("desk", "side", false);
+    let result = window.add(makeObservation());
+    for (let index = 1; index < CALIBRATION_SAMPLE_TARGET; index += 1) {
+      result = window.add(makeObservation({ timestampMs: index * 40, sequence: index }));
+      if (index < CALIBRATION_SAMPLE_TARGET - 1) expect(result.stable).toBe(false);
+    }
+    expect(result.stable).toBe(true);
+    expect(result.sampleCount).toBe(CALIBRATION_SAMPLE_TARGET);
   });
 
   it("resets calibration when required evidence becomes unreliable", () => {

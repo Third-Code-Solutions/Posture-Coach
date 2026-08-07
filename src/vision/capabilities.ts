@@ -4,6 +4,7 @@ export interface BrowserCapabilities {
   secureContext: boolean;
   cameraApi: boolean;
   worker: boolean;
+  workerCanvas2d: boolean;
   imageBitmap: boolean;
   webAssembly: boolean;
   webgl2: boolean;
@@ -17,6 +18,7 @@ export function readBrowserCapabilities(): BrowserCapabilities {
       secureContext: false,
       cameraApi: false,
       worker: false,
+      workerCanvas2d: false,
       imageBitmap: false,
       webAssembly: false,
       webgl2: false,
@@ -25,6 +27,7 @@ export function readBrowserCapabilities(): BrowserCapabilities {
     };
   }
   const webgl = probeWebglCapabilities();
+  const workerCanvas2d = supportsWorkerCanvas2d();
   return {
     secureContext:
       window.isSecureContext ||
@@ -32,6 +35,7 @@ export function readBrowserCapabilities(): BrowserCapabilities {
       window.location.hostname === "127.0.0.1",
     cameraApi: Boolean(navigator.mediaDevices?.getUserMedia),
     worker: typeof Worker !== "undefined",
+    workerCanvas2d,
     imageBitmap: typeof createImageBitmap === "function",
     webAssembly: typeof WebAssembly !== "undefined",
     webgl2: webgl.webgl2Available,
@@ -42,5 +46,19 @@ export function readBrowserCapabilities(): BrowserCapabilities {
 }
 
 export function hasLocalInferenceSupport(capabilities: BrowserCapabilities): boolean {
-  return capabilities.worker && capabilities.imageBitmap && capabilities.webAssembly;
+  return capabilities.imageBitmap && capabilities.webAssembly;
+}
+
+export function hasWorkerInferenceSupport(capabilities: BrowserCapabilities): boolean {
+  return capabilities.worker && capabilities.workerCanvas2d;
+}
+
+export function supportsWorkerCanvas2d(): boolean {
+  try {
+    return (
+      typeof OffscreenCanvas !== "undefined" && new OffscreenCanvas(1, 1).getContext("2d") !== null
+    );
+  } catch {
+    return false;
+  }
 }
