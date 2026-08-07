@@ -39,6 +39,7 @@ import {
   getCameraConstraints,
   getInferenceFrameDimensions,
   getPortraitFallbackVideoConstraints,
+  getPortraitPreviewFrameDimensions,
   hasWorkerInferenceSupport,
   getLocalMediaKind,
   isCompactCaptureViewport,
@@ -273,6 +274,7 @@ export function CoachApp() {
   const videoFrameCallbackRef = useRef<number | null>(null);
   const frameCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const portraitPreviewCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const portraitInferenceCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const portraitTransformRef = useRef(false);
   const cameraTrackSettingsRef = useRef<MediaTrackSettings | null>(null);
   const directBitmapSupportRef = useRef<{ video: boolean | null; image: boolean | null }>({
@@ -281,6 +283,7 @@ export function CoachApp() {
   });
   const frameCaptureFailureRef = useRef(false);
   const lastVideoTimeRef = useRef(-1);
+  const lastPreviewVideoTimeRef = useRef(-1);
   const lastSubmittedTimestampRef = useRef(-1);
   const sequenceRef = useRef(0);
   const sessionStartedRef = useRef<number | null>(null);
@@ -293,6 +296,7 @@ export function CoachApp() {
   const calibrationStableRef = useRef(false);
   const processingRef = useRef(false);
   const frameCaptureInFlightRef = useRef(false);
+  const releaseCaptureCanvasesWhenIdleRef = useRef(false);
   const framePipelineStartedAtRef = useRef(new Map<number, number>());
   const inferenceFrameSizeRef = useRef<FrameDimensions | null>(null);
   const adaptiveInferenceRef = useRef(new AdaptiveInferenceQualityController());
@@ -495,8 +499,8 @@ export function CoachApp() {
     workerRef.current?.dispose();
     workerRef.current = null;
     lastVideoTimeRef.current = -1;
+    lastPreviewVideoTimeRef.current = -1;
     lastSubmittedTimestampRef.current = -1;
-    frameCaptureInFlightRef.current = false;
     frameCaptureFailureRef.current = false;
     framePipelineStartedAtRef.current.clear();
     adaptiveInferenceRef.current.clearSamples();
@@ -543,9 +547,13 @@ export function CoachApp() {
     }
     if (rotateLandscapeCamera) {
       const canvas = portraitPreviewCanvasRef.current;
-      if (canvas && (canvas.width !== effectiveWidth || canvas.height !== effectiveHeight)) {
-        canvas.width = effectiveWidth;
-        canvas.height = effectiveHeight;
+      const previewDimensions = getPortraitPreviewFrameDimensions(width, height);
+      if (
+        canvas &&
+        (canvas.width !== previewDimensions.width || canvas.height !== previewDimensions.height)
+      ) {
+        canvas.width = previewDimensions.width;
+        canvas.height = previewDimensions.height;
       }
     }
   };
@@ -558,8 +566,13 @@ export function CoachApp() {
     const height = video.videoHeight;
     const canvas = portraitPreviewCanvasRef.current;
     if (!canvas) throw new Error("The portrait camera canvas is unavailable.");
-    const targetWidth = height;
-    const targetHeight = width;
+    const { width: targetWidth, height: targetHeight } = getPortraitPreviewFrameDimensions(
+      width,
+      height,
+    );
+    if (targetWidth <= 0 || targetHeight <= 0) {
+      throw new Error("The browser did not provide a usable landscape camera frame.");
+    }
     if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
       canvas.width = targetWidth;
       canvas.height = targetHeight;
@@ -568,17 +581,18 @@ export function CoachApp() {
     if (!context) throw new Error("The browser could not create a portrait camera canvas.");
     context.setTransform(1, 0, 0, 1, 0, 0);
     context.clearRect(0, 0, targetWidth, targetHeight);
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
     context.translate(targetWidth / 2, targetHeight / 2);
     context.rotate(Math.PI / 2);
-    context.drawImage(video, -width / 2, -height / 2, width, height);
+    context.drawImage(video, -targetHeight / 2, -targetWidth / 2, targetHeight, targetWidth);
     return canvas;
   };
 
-  const capturePortraitBitmap = async (video: HTMLVideoElement): Promise<ImageBitmap> => {
+  const capturePortraitBitmap = async (canvas: HTMLCanvasElement): Promise<ImageBitmap> => {
     if (typeof createImageBitmap !== "function") {
       throw new Error("ImageBitmap capture is unavailable in this browser.");
     }
-    const canvas = drawPortraitFrame(video);
     const dimensions = getInferenceFrameDimensions(
       canvas.width,
       canvas.height,
@@ -596,6 +610,25 @@ export function CoachApp() {
       // inference budget instead of receiving a full-resolution frame.
       return captureScaledCanvasBitmap(canvas, dimensions);
     }
+  };
+
+  const snapshotPortraitFrame = (preview: HTMLCanvasElement): HTMLCanvasElement => {
+    let snapshot = portraitInferenceCanvasRef.current;
+    if (!snapshot) {
+      snapshot = document.createElement("canvas");
+      snapshot.dataset.portraitInferenceSnapshot = "true";
+      portraitInferenceCanvasRef.current = snapshot;
+    }
+    if (snapshot.width !== preview.width || snapshot.height !== preview.height) {
+      snapshot.width = preview.width;
+      snapshot.height = preview.height;
+    }
+    const context = snapshot.getContext("2d", { alpha: false });
+    if (!context) throw new Error("The browser could not create a portrait inference canvas.");
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.clearRect(0, 0, snapshot.width, snapshot.height);
+    context.drawImage(preview, 0, 0);
+    return snapshot;
   };
 
   const captureScaledCanvasBitmap = async (
@@ -654,20 +687,58 @@ export function CoachApp() {
     return captureScaledCanvasBitmap(source, dimensions);
   };
 
+  const handleFrameCaptureFailure = (sourceEpoch: number): void => {
+    if (
+      processingRef.current &&
+      sourceEpoch === sourceEpochRef.current &&
+      !frameCaptureFailureRef.current
+    ) {
+      frameCaptureFailureRef.current = true;
+      cleanupSession(false);
+      setSourceState("error");
+      setError(
+        "This browser could not capture a live frame for local tracking. Update the browser or choose a local video file.",
+      );
+    }
+  };
+
   const processFrame = async (mediaTime?: number) => {
     const video = videoRef.current;
     const worker = workerRef.current;
     const sourceEpoch = sourceEpochRef.current;
     if (!video || !worker || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
-    if (!worker.canAcceptFrame() || frameCaptureInFlightRef.current) return;
     const currentTime =
       typeof mediaTime === "number" && Number.isFinite(mediaTime) ? mediaTime : video.currentTime;
+    const portraitPipelineStartedAtMs = performance.now();
+    let portraitCanvas: HTMLCanvasElement | null = null;
+    try {
+      if (portraitTransformRef.current) {
+        if (currentTime > lastPreviewVideoTimeRef.current) {
+          portraitCanvas = drawPortraitFrame(video);
+          lastPreviewVideoTimeRef.current = currentTime;
+        } else {
+          portraitCanvas = portraitPreviewCanvasRef.current;
+        }
+      }
+    } catch {
+      handleFrameCaptureFailure(sourceEpoch);
+      return;
+    }
+    if (frameCaptureInFlightRef.current) return;
+    if (!worker.canAcceptFrame()) return;
     if (currentTime <= lastVideoTimeRef.current) return;
-    const pipelineStartedAtMs = performance.now();
+    const pipelineStartedAtMs = portraitCanvas ? portraitPipelineStartedAtMs : performance.now();
+    let captureCanvas: HTMLCanvasElement | null = null;
+    try {
+      captureCanvas = portraitCanvas ? snapshotPortraitFrame(portraitCanvas) : null;
+    } catch {
+      handleFrameCaptureFailure(sourceEpoch);
+      return;
+    }
     frameCaptureInFlightRef.current = true;
     try {
-      const frame = portraitTransformRef.current
-        ? await capturePortraitBitmap(video)
+      const frame = captureCanvas
+        ? await capturePortraitBitmap(captureCanvas)
         : await captureBitmap(video, video.videoWidth, video.videoHeight, "video");
       if (
         !processingRef.current ||
@@ -702,22 +773,10 @@ export function CoachApp() {
       }
     } catch {
       // A frame may disappear during source changes. Cleanup owns the error state.
-      if (
-        processingRef.current &&
-        sourceEpoch === sourceEpochRef.current &&
-        !frameCaptureFailureRef.current
-      ) {
-        frameCaptureFailureRef.current = true;
-        cleanupSession(false);
-        setSourceState("error");
-        setError(
-          "This browser could not capture a live frame for local tracking. Update the browser or choose a local video file.",
-        );
-      }
+      handleFrameCaptureFailure(sourceEpoch);
     } finally {
-      if (sourceEpoch === sourceEpochRef.current && workerRef.current === worker) {
-        frameCaptureInFlightRef.current = false;
-      }
+      frameCaptureInFlightRef.current = false;
+      if (releaseCaptureCanvasesWhenIdleRef.current) releaseCaptureCanvases();
     }
   };
 
@@ -786,6 +845,7 @@ export function CoachApp() {
       if (!isCurrentVideoSource(video, token)) return;
       updateVideoPresentation(video);
       if (portraitTransformRef.current) drawPortraitFrame(video);
+      lastPreviewVideoTimeRef.current = video.currentTime;
       video.onresize = () => {
         if (videoRef.current !== video || video.videoWidth <= 0 || video.videoHeight <= 0) return;
         updateVideoPresentation(video);
@@ -1100,7 +1160,6 @@ export function CoachApp() {
     sourceEpochRef.current += 1;
     stopSessionAssistance();
     processingRef.current = false;
-    frameCaptureInFlightRef.current = false;
     calibratingRef.current = false;
     setCalibrating(false);
     stopFrameLoop();
@@ -1163,7 +1222,24 @@ export function CoachApp() {
       const context = portraitCanvas.getContext("2d");
       context?.clearRect(0, 0, portraitCanvas.width, portraitCanvas.height);
     }
+    if (frameCaptureInFlightRef.current) {
+      releaseCaptureCanvasesWhenIdleRef.current = true;
+    } else {
+      releaseCaptureCanvases();
+    }
     setTrackingLatencyMs(null);
+  }
+
+  function releaseCaptureCanvases(): void {
+    for (const ref of [frameCanvasRef, portraitInferenceCanvasRef]) {
+      const canvas = ref.current;
+      if (canvas) {
+        canvas.width = 0;
+        canvas.height = 0;
+        ref.current = null;
+      }
+    }
+    releaseCaptureCanvasesWhenIdleRef.current = false;
   }
 
   function beginCalibrationForCurrentContext(): void {
@@ -1308,8 +1384,8 @@ export function CoachApp() {
     streamRef.current = null;
     releaseMediaSource();
     lastVideoTimeRef.current = -1;
+    lastPreviewVideoTimeRef.current = -1;
     lastSubmittedTimestampRef.current = -1;
-    frameCaptureInFlightRef.current = false;
     frameCaptureFailureRef.current = false;
     sequenceRef.current = 0;
     visualSmootherRef.current.reset();

@@ -3,6 +3,7 @@ import {
   getCameraConstraints,
   getInferenceFrameDimensions,
   getPortraitFallbackVideoConstraints,
+  getPortraitPreviewFrameDimensions,
   getPortraitVideoConstraints,
   isCompactCaptureViewport,
   isPortraitFrame,
@@ -83,5 +84,12 @@ describe("camera capture constraints", () => {
     expect(getInferenceFrameDimensions(320, 180)).toEqual({ width: 320, height: 180 });
     expect(getInferenceFrameDimensions(1920, 1080, 480)).toEqual({ width: 480, height: 270 });
     expect(getInferenceFrameDimensions(0, 180)).toEqual({ width: 0, height: 0 });
+  });
+
+  it("bounds locally rotated portrait previews before painting", () => {
+    expect(getPortraitPreviewFrameDimensions(1920, 1080)).toEqual({ width: 540, height: 960 });
+    expect(getPortraitPreviewFrameDimensions(1280, 720)).toEqual({ width: 540, height: 960 });
+    expect(getPortraitPreviewFrameDimensions(320, 180)).toEqual({ width: 180, height: 320 });
+    expect(getPortraitPreviewFrameDimensions(0, 180)).toEqual({ width: 0, height: 0 });
   });
 });

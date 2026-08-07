@@ -28,10 +28,17 @@ test("analyzes a fake webcam stream locally", async ({ page, browserName }, test
     const stoppedTracks: MediaStreamTrack[] = [];
     Object.defineProperty(window, "__testWakeLocks", { value: sentinels });
     Object.defineProperty(window, "__stoppedCameraTracks", { value: stoppedTracks });
+    Object.defineProperty(window, "__terminatedPoseWorkers", { value: 0, writable: true });
     const originalStop = MediaStreamTrack.prototype.stop;
     MediaStreamTrack.prototype.stop = function stop() {
       stoppedTracks.push(this);
       originalStop.call(this);
+    };
+    const originalTerminate = Worker.prototype.terminate;
+    Worker.prototype.terminate = function terminate() {
+      const testWindow = window as typeof window & { __terminatedPoseWorkers: number };
+      testWindow.__terminatedPoseWorkers += 1;
+      originalTerminate.call(this);
     };
     Object.defineProperty(navigator, "wakeLock", {
       configurable: true,
@@ -143,6 +150,59 @@ test("analyzes a fake webcam stream locally", async ({ page, browserName }, test
       }),
     )
     .toBe(true);
+  if (testInfo.project.name === "chromium") {
+    for (let cycle = 0; cycle < 2; cycle += 1) {
+      await page.getByRole("button", { name: "Use webcam" }).click();
+      await expect(page.getByText(/camera.*processing on device/i)).toBeVisible({
+        timeout: 15_000,
+      });
+      await expect(page.getByText(/\d+ms live/i)).toBeVisible({ timeout: 15_000 });
+      await page.locator("video").evaluate((video) => {
+        const testWindow = window as typeof window & { __cycleCameraStreams?: MediaStream[] };
+        const stream = (video as HTMLVideoElement).srcObject as MediaStream | null;
+        if (!stream) throw new Error("Repeated camera cycle did not attach a stream.");
+        (testWindow.__cycleCameraStreams ??= []).push(stream);
+      });
+      await page.getByRole("button", { name: "Stop session" }).click();
+      await expect
+        .poll(() =>
+          page.evaluate(() => {
+            const testWindow = window as typeof window & {
+              __cycleCameraStreams?: MediaStream[];
+              __stoppedCameraTracks?: MediaStreamTrack[];
+            };
+            return Boolean(
+              testWindow.__cycleCameraStreams?.every((stream) =>
+                stream
+                  .getTracks()
+                  .every(
+                    (track) =>
+                      track.readyState === "ended" ||
+                      testWindow.__stoppedCameraTracks?.includes(track),
+                  ),
+              ),
+            );
+          }),
+        )
+        .toBe(true);
+    }
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const sentinels = (
+            window as typeof window & { __testWakeLocks?: Array<{ released: boolean }> }
+          ).__testWakeLocks;
+          return Boolean(sentinels?.length && sentinels.every((sentinel) => sentinel.released));
+        }),
+      )
+      .toBe(true);
+    expect(
+      await page.evaluate(
+        () =>
+          (window as typeof window & { __terminatedPoseWorkers: number }).__terminatedPoseWorkers,
+      ),
+    ).toBeGreaterThanOrEqual(5);
+  }
   expect(faults.pageErrors).toEqual([]);
   expect(faults.consoleErrors).toEqual([]);
 });
@@ -296,6 +356,114 @@ test.describe("mobile portrait camera", () => {
     browserName,
   }) => {
     test.skip(browserName !== "chromium", "Portrait fake-video compositor requires Chrome.");
+    await page.addInitScript(() => {
+      const testWindow = window as typeof window & {
+        __delayedWorkerInferenceCount: number;
+        __portraitCaptureInFlight: boolean;
+        __portraitPreviewDrawCount: number;
+        __releasePortraitCapture?: () => void;
+      };
+      Object.defineProperty(testWindow, "__portraitPreviewDrawCount", {
+        value: 0,
+        writable: true,
+      });
+      Object.defineProperty(testWindow, "__portraitCaptureInFlight", {
+        value: false,
+        writable: true,
+      });
+      Object.defineProperty(testWindow, "__delayedWorkerInferenceCount", {
+        value: 0,
+        writable: true,
+      });
+
+      const canvasPrototype = CanvasRenderingContext2D.prototype as unknown as {
+        drawImage: (...args: unknown[]) => void;
+      };
+      const originalDrawImage = canvasPrototype.drawImage;
+      canvasPrototype.drawImage = function (...args: unknown[]) {
+        const context = this as unknown as CanvasRenderingContext2D;
+        if (context.canvas.classList.contains("portrait-preview-canvas")) {
+          testWindow.__portraitPreviewDrawCount += 1;
+        }
+        Reflect.apply(originalDrawImage, this, args);
+      };
+
+      const videoWidthGetter = Object.getOwnPropertyDescriptor(
+        HTMLVideoElement.prototype,
+        "videoWidth",
+      )?.get;
+      const videoHeightGetter = Object.getOwnPropertyDescriptor(
+        HTMLVideoElement.prototype,
+        "videoHeight",
+      )?.get;
+      if (videoWidthGetter && videoHeightGetter) {
+        Object.defineProperty(HTMLVideoElement.prototype, "videoWidth", {
+          configurable: true,
+          get() {
+            const width = videoWidthGetter.call(this) as number;
+            const height = videoHeightGetter.call(this) as number;
+            return width > height && width > 0 ? 1024 : width;
+          },
+        });
+        Object.defineProperty(HTMLVideoElement.prototype, "videoHeight", {
+          configurable: true,
+          get() {
+            const width = videoWidthGetter.call(this) as number;
+            const height = videoHeightGetter.call(this) as number;
+            return width > height && height > 0 ? 576 : height;
+          },
+        });
+      }
+
+      const originalCreateImageBitmap = window.createImageBitmap.bind(window);
+      let delayedPortraitCapture = false;
+      Object.defineProperty(window, "createImageBitmap", {
+        configurable: true,
+        value: (...args: unknown[]) => {
+          const source = args[0];
+          if (
+            !delayedPortraitCapture &&
+            source instanceof HTMLCanvasElement &&
+            source.dataset.portraitInferenceSnapshot === "true"
+          ) {
+            delayedPortraitCapture = true;
+            testWindow.__portraitCaptureInFlight = true;
+            return new Promise<ImageBitmap>((resolve, reject) => {
+              testWindow.__releasePortraitCapture = () => {
+                try {
+                  const capture = Reflect.apply(
+                    originalCreateImageBitmap,
+                    window,
+                    args,
+                  ) as Promise<ImageBitmap>;
+                  capture.then(resolve, reject).finally(() => {
+                    testWindow.__portraitCaptureInFlight = false;
+                  });
+                } catch (error) {
+                  testWindow.__portraitCaptureInFlight = false;
+                  reject(error);
+                }
+              };
+            });
+          }
+          return Reflect.apply(originalCreateImageBitmap, window, args) as Promise<ImageBitmap>;
+        },
+      });
+
+      const workerPrototype = Worker.prototype as unknown as {
+        postMessage: (...args: unknown[]) => void;
+      };
+      const originalPostMessage = workerPrototype.postMessage;
+      workerPrototype.postMessage = function (...args: unknown[]) {
+        const message = args[0] as { type?: string } | undefined;
+        if (message?.type === "infer") {
+          testWindow.__delayedWorkerInferenceCount += 1;
+          window.setTimeout(() => Reflect.apply(originalPostMessage, this, args), 1_500);
+          return;
+        }
+        Reflect.apply(originalPostMessage, this, args);
+      };
+    });
     const faults = captureBrowserFaults(page);
     await page.goto("/");
     await page.getByLabel("Camera lens").selectOption("environment");
@@ -315,6 +483,60 @@ test.describe("mobile portrait camera", () => {
     await expect(page.locator(".portrait-preview-canvas")).toHaveClass(/is-visible/, {
       timeout: 15_000,
     });
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as typeof window & { __portraitCaptureInFlight: boolean })
+              .__portraitCaptureInFlight,
+        ),
+      )
+      .toBe(true);
+    await page.evaluate(() => {
+      (
+        window as typeof window & { __portraitPreviewDrawCount: number }
+      ).__portraitPreviewDrawCount = 0;
+    });
+    await page.waitForTimeout(450);
+    expect(
+      await page.evaluate(
+        () =>
+          (window as typeof window & { __portraitPreviewDrawCount: number })
+            .__portraitPreviewDrawCount,
+      ),
+    ).toBeGreaterThan(2);
+    await page.evaluate(() => {
+      const release = (window as typeof window & { __releasePortraitCapture?: () => void })
+        .__releasePortraitCapture;
+      if (!release) throw new Error("Portrait capture release gate was not installed.");
+      release();
+    });
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const testWindow = window as typeof window & {
+            __delayedWorkerInferenceCount: number;
+            __portraitCaptureInFlight: boolean;
+          };
+          return (
+            !testWindow.__portraitCaptureInFlight && testWindow.__delayedWorkerInferenceCount > 0
+          );
+        }),
+      )
+      .toBe(true);
+    await page.evaluate(() => {
+      (
+        window as typeof window & { __portraitPreviewDrawCount: number }
+      ).__portraitPreviewDrawCount = 0;
+    });
+    await page.waitForTimeout(450);
+    expect(
+      await page.evaluate(
+        () =>
+          (window as typeof window & { __portraitPreviewDrawCount: number })
+            .__portraitPreviewDrawCount,
+      ),
+    ).toBeGreaterThan(2);
     await expect(page.getByText("Guided setup", { exact: true })).toBeHidden({ timeout: 8_000 });
     await expect(
       page.getByText(/Calibrating \d+\/12|Checking steadiness|Calibration ready/),
@@ -344,9 +566,10 @@ test.describe("mobile portrait camera", () => {
       };
     });
 
-    expect(geometry.videoWidth).toBeGreaterThan(geometry.videoHeight);
-    expect(geometry.canvasWidth).toBe(geometry.videoHeight);
-    expect(geometry.canvasHeight).toBe(geometry.videoWidth);
+    expect(geometry.videoWidth).toBe(1024);
+    expect(geometry.videoHeight).toBe(576);
+    expect(geometry.canvasWidth).toBe(540);
+    expect(geometry.canvasHeight).toBe(960);
     expect(geometry.canvasVisible).toBe(true);
     expect(geometry.rawVideoOpacity).toBe("0");
     expect(geometry.previewHeight).toBeGreaterThan(geometry.previewWidth);

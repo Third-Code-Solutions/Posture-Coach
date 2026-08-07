@@ -9,7 +9,7 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-Open `http://localhost:3000`. Camera access requires a secure context (`localhost` is allowed) and an explicit click. Uploaded videos and still images are read through local object URLs and revoked when the session stops. Front/rear camera selection stays local; switching lenses releases the previous stream before requesting the next one. On phones, keep device upright; if browser returns landscape frames, app rotates them locally before preview and inference.
+Open `http://localhost:3000`. Camera access requires a secure context (`localhost` is allowed) and an explicit click. Uploaded videos and still images are read through local object URLs and revoked when the session stops. Front/rear camera selection stays local; switching lenses releases the previous stream before requesting the next one. On phones, keep device upright; if browser returns landscape frames, app rotates them through a bounded local portrait compositor. A separate inference snapshot keeps preview painting active during asynchronous bitmap capture and dedicated-worker backpressure. The WebKit main-thread compatibility path still shares main-thread frame time with inference.
 
 Quality gates:
 
@@ -48,6 +48,7 @@ In a second terminal, confirm `http://127.0.0.1:3001/healthz` returns `ok`, then
 - Still images run one local pose pass and show the landmark overlay. Movement coaching and repetition counts require a webcam or video sequence.
 - Evaluation abstains when required landmarks are missing, confidence is low, the view is unsupported, or calibration is not stable.
 - Live inference starts at a 720px longest-edge input budget, then can step to 576px or 480px only after sustained capture-to-result latency. Hysteresis restores detail after a long fast run and worker restarts clear incomplete streaks. Full pose model, uncropped preview, confidence gates, and camera-local processing stay unchanged.
+- Locally rotated portrait preview is capped at 960px longest edge. A separate bounded inference snapshot lets it redraw during asynchronous bitmap capture and dedicated-worker backpressure, avoiding full-resolution canvas churn and frozen-looking preview on slower phones.
 - Front camera mirrors preview by default; rear camera stays unmirrored and usually offers wider full-body framing. Canonical anatomical left/right labels never change.
 - Guided camera setup waits five seconds before accepting baseline samples, giving the person time to leave the controls and stand naturally. A generated local tone accompanies the visible countdown when browser audio is available.
 - Live video requests an optional screen wake lock so phones do not dim during hands-free practice. Unsupported or battery-blocked devices continue normally and show a manual sleep-setting fallback.

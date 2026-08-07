@@ -9,6 +9,7 @@ export type CameraFacingMode = "user" | "environment";
 
 export const PORTRAIT_CAMERA_ASPECT_RATIO = 9 / 16;
 export const MAX_INFERENCE_FRAME_DIMENSION = MEASUREMENT_THRESHOLDS.inference.detailFrameDimension;
+export const MAX_PORTRAIT_PREVIEW_FRAME_DIMENSION = 960;
 
 export interface FrameDimensions {
   width: number;
@@ -96,6 +97,17 @@ export function getInferenceFrameDimensions(
     width: Math.max(1, Math.round(width * scale)),
     height: Math.max(1, Math.round(height * scale)),
   };
+}
+
+export function getPortraitPreviewFrameDimensions(
+  landscapeWidth: number,
+  landscapeHeight: number,
+): FrameDimensions {
+  return getInferenceFrameDimensions(
+    landscapeHeight,
+    landscapeWidth,
+    MAX_PORTRAIT_PREVIEW_FRAME_DIMENSION,
+  );
 }
 
 export async function preferPortraitTrack(
