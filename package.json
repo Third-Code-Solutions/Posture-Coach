@@ -6,7 +6,7 @@
   "description": "Privacy-first browser-local posture coaching MVP",
   "packageManager": "pnpm@11.13.1",
   "engines": {
-    "node": ">=20.9.0",
+    "node": "24.x",
     "pnpm": ">=11.13.1"
   },
   "scripts": {
