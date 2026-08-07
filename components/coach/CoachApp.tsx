@@ -22,6 +22,7 @@ import {
   SessionSummary,
   SessionTracker,
   LandmarkSmoother,
+  MEASUREMENT_THRESHOLDS,
   createCalibrationProfile,
   isObservedViewCompatible,
   isViewSupported,
@@ -60,6 +61,7 @@ const initialFeedback: FeedbackMessage = {
   tone: "guide",
   title: "Calibrate before coaching",
   body: "Choose a source, get your full body in a portrait frame, settle into a comfortable position, then hold still for a moment. Advice stays paused until the evidence is steady.",
+  measurementRuleIds: ["calibration-stable-window"],
 };
 
 function imageFeedback(status: ImageStatus | null): FeedbackMessage {
@@ -70,6 +72,7 @@ function imageFeedback(status: ImageStatus | null): FeedbackMessage {
       tone: "positive",
       title: "Pose found in this image",
       body: "The landmark overlay is local to this tab. Still images show pose evidence only; use a webcam or video for movement coaching.",
+      measurementRuleIds: ["image-pose-confidence"],
     };
   }
   if (status === "no-pose") {
@@ -79,6 +82,7 @@ function imageFeedback(status: ImageStatus | null): FeedbackMessage {
       tone: "guide",
       title: "No clear pose found",
       body: "Try a brighter image with one full body visible. The image stayed on this device and was not uploaded.",
+      measurementRuleIds: ["image-pose-confidence"],
     };
   }
   return {
@@ -182,19 +186,20 @@ function unsupportedViewFeedback(mode: AnalysisMode, view: CameraView): Feedback
     tone: "guide",
     title: "Set your view",
     body: `${MODE_LABELS[mode]} needs ${requiredView}. Choose a supported camera view before calibrating.`,
+    measurementRuleIds: ["capture-view-confidence"],
     evidenceIds: evidenceIdsForIssue("positioning"),
   };
 }
 
 function summaryQuality(summary: SessionSummary): { label: string; body: string } {
   const percentage = Math.round(summary.evidenceCoverage * 100);
-  if (summary.evidenceCoverage >= 0.75) {
+  if (summary.evidenceCoverage >= MEASUREMENT_THRESHOLDS.confidence.highEvidenceCoverage) {
     return {
       label: "Steady evidence",
       body: `${percentage}% of analyzed frames met the evidence gate. Use that signal to guide practice, not to make a clinical judgment.`,
     };
   }
-  if (summary.evidenceCoverage >= 0.45) {
+  if (summary.evidenceCoverage >= MEASUREMENT_THRESHOLDS.confidence.mixedEvidenceCoverage) {
     return {
       label: "Mixed evidence",
       body: `${percentage}% of analyzed frames met the evidence gate. Improve lighting, distance, or camera angle before relying on cues.`,
@@ -280,7 +285,9 @@ export function CoachApp() {
   const calibrationStableRef = useRef(false);
   const processingRef = useRef(false);
   const frameCaptureInFlightRef = useRef(false);
-  const visualSmootherRef = useRef(new LandmarkSmoother(0.72));
+  const visualSmootherRef = useRef(
+    new LandmarkSmoother(MEASUREMENT_THRESHOLDS.temporal.visualSmootherAlphaAtReferenceFrame),
+  );
   const sessionTrackerRef = useRef<SessionTracker | null>(null);
   const sourceEpochRef = useRef(0);
   const cameraRequestSequenceRef = useRef(0);
@@ -381,13 +388,18 @@ export function CoachApp() {
     if (isImage) {
       processingRef.current = false;
       setImageStatus(
-        message.landmarks.length > 0 && observation.poseConfidence >= 0.45 ? "ready" : "no-pose",
+        message.landmarks.length > 0 &&
+          observation.poseConfidence >= MEASUREMENT_THRESHOLDS.confidence.minimumImagePoseScore
+          ? "ready"
+          : "no-pose",
       );
       return;
     }
     if (calibratingRef.current && calibrationRef.current) {
+      if (!calibrationRef.current.acceptsTimestamp(observation.timestampMs)) return;
       if (
-        observation.poseConfidence >= 0.6 &&
+        observation.poseConfidence >=
+          MEASUREMENT_THRESHOLDS.confidence.minimumCalibrationViewPoseScore &&
         (observation.observedView === "unknown" ||
           observation.viewConfidence < MIN_OBSERVED_VIEW_CONFIDENCE)
       ) {
@@ -626,7 +638,11 @@ export function CoachApp() {
         return;
       }
       lastVideoTimeRef.current = currentTime;
-      const timestampMs = Math.max(performance.now(), lastSubmittedTimestampRef.current + 0.1);
+      const timestampMs = Math.max(
+        performance.now(),
+        lastSubmittedTimestampRef.current +
+          MEASUREMENT_THRESHOLDS.temporal.minimumSubmittedTimestampStepMs,
+      );
       lastSubmittedTimestampRef.current = timestampMs;
       worker.submit(frame, timestampMs, sequenceRef.current++);
     } catch {
@@ -1107,8 +1123,16 @@ export function CoachApp() {
       setResult(null);
       return;
     }
-    invalidateInferenceContext();
-    const window = new CalibrationWindow(currentMode, currentView, currentMirror);
+    // Calibration uses the current source, view, and mirror context. Keep the
+    // ready local model alive so slower browsers do not consume the uploaded
+    // video while unnecessarily loading a second worker.
+    const window = new CalibrationWindow(
+      currentMode,
+      currentView,
+      currentMirror,
+      CALIBRATION_SAMPLE_TARGET,
+      performance.now(),
+    );
     calibrationRef.current = window;
     calibratingRef.current = true;
     calibrationStableRef.current = false;

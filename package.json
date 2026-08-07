@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Privacy-first browser-local posture coaching MVP",
+  "description": "Privacy-first browser-local posture coaching",
   "packageManager": "pnpm@11.13.1",
   "engines": {
     "node": "24.x",

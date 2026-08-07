@@ -1,12 +1,20 @@
 import type { Landmark, LandmarkSet, LandmarkName } from "../contracts";
+import { MEASUREMENT_THRESHOLDS } from "../measurement-registry";
 
 export class LandmarkSmoother {
   private previous: LandmarkSet | null = null;
   private previousTimestamp = -1;
   private readonly timeConstantMs: number;
 
-  constructor(alphaAtReferenceFrame = 0.35, referenceIntervalMs = 33) {
-    const boundedAlpha = Math.min(0.99, Math.max(0.01, alphaAtReferenceFrame));
+  constructor(
+    alphaAtReferenceFrame: number = MEASUREMENT_THRESHOLDS.temporal
+      .defaultSmootherAlphaAtReferenceFrame,
+    referenceIntervalMs: number = MEASUREMENT_THRESHOLDS.temporal.smootherReferenceIntervalMs,
+  ) {
+    const boundedAlpha = Math.min(
+      MEASUREMENT_THRESHOLDS.temporal.maximumSmootherAlpha,
+      Math.max(MEASUREMENT_THRESHOLDS.temporal.minimumSmootherAlpha, alphaAtReferenceFrame),
+    );
     this.timeConstantMs = -referenceIntervalMs / Math.log(1 - boundedAlpha);
   }
 
@@ -14,7 +22,7 @@ export class LandmarkSmoother {
     if (
       !this.previous ||
       timestampMs <= this.previousTimestamp ||
-      timestampMs - this.previousTimestamp > 800
+      timestampMs - this.previousTimestamp > MEASUREMENT_THRESHOLDS.temporal.smootherResetGapMs
     ) {
       this.previous = structuredClone(next);
       this.previousTimestamp = timestampMs;

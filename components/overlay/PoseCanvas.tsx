@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import type { LandmarkSet } from "../../src/domain";
+import { MEASUREMENT_THRESHOLDS, type LandmarkSet } from "../../src/domain";
 import { getContainedPreviewGeometry, mapNormalizedPreviewPoint } from "./preview-geometry";
 
 const CONNECTIONS: Array<[keyof LandmarkSet, keyof LandmarkSet]> = [
@@ -18,6 +18,13 @@ const CONNECTIONS: Array<[keyof LandmarkSet, keyof LandmarkSet]> = [
   ["rightHip", "rightKnee"],
   ["rightKnee", "rightAnkle"],
 ];
+
+export function isOverlayLandmarkVisible(landmark: LandmarkSet[keyof LandmarkSet]): boolean {
+  return (
+    Math.min(landmark.visibility, landmark.presence) >=
+    MEASUREMENT_THRESHOLDS.confidence.minimumOverlayLandmarkScore
+  );
+}
 
 export function PoseCanvas({
   landmarks,
@@ -68,7 +75,7 @@ export function PoseCanvas({
       const geometry = getContainedPreviewGeometry(rect.width, rect.height, width, height);
       const point = (name: keyof LandmarkSet) => {
         const landmark = landmarks[name];
-        if (Math.min(landmark.visibility, landmark.presence) < 0.45) return null;
+        if (!isOverlayLandmarkVisible(landmark)) return null;
         return mapNormalizedPreviewPoint(landmark.x, landmark.y, geometry, mirroredRef.current);
       };
       context.lineWidth = 2;

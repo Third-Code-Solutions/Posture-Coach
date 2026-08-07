@@ -17,6 +17,7 @@ The cache deliberately stores summaries and links, not copied articles. Sources 
 - Duration and task design matter. NIOSH distinguishes neutral, awkward, and static postures and recommends changing exposure, equipment, tasks, or breaks where appropriate.
 - Exercise cues are individualized movement heuristics. Depth, tempo, body line, knee tracking, and elbow control are not universal clinical targets.
 - Every live issue declares measurement status separately from health guidance. Current detector thresholds are labeled unvalidated product heuristics; framing checks are operational only.
+- Every threshold-driven pause, corrective cue, and rep decision resolves to the versioned registry in `src/domain/measurement-registry/index.ts`; see [measurement methodology](measurement-methodology.md).
 - Insufficient landmarks, unsupported views, calibration drift, and unstable tracking suppress form advice. The app must abstain rather than fill gaps with a research-sounding guess.
 - Stop with pain. Persistent pain, weakness, numbness, progressive asymmetry, breathing difficulty, a new deformity, or a known condition needs qualified in-person assessment.
 

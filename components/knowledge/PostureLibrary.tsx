@@ -11,6 +11,7 @@ import {
   type EvidenceLevel,
   findPostureEvidence,
 } from "../../src/knowledge";
+import { MeasurementMethodology } from "./MeasurementMethodology";
 
 const CATEGORY_FILTERS: readonly EvidenceCategoryFilter[] = ["all", ...EVIDENCE_CATEGORIES];
 
@@ -100,6 +101,8 @@ export function PostureLibrary() {
           baseline; tracking confidence means landmarks are visible, not that posture is healthy.
         </p>
       </aside>
+
+      <MeasurementMethodology />
 
       <div className="knowledge-tools">
         <label className="knowledge-search">

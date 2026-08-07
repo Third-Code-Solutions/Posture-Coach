@@ -1,9 +1,19 @@
 import type { AnalysisMode, CameraView, CalibrationProfile, FrameObservation } from "../contracts";
 import { isObservedViewCompatible, MIN_OBSERVED_VIEW_CONFIDENCE } from "../contracts";
 import { assessConfidence } from "../confidence";
-import { angleAt, distance, isFinitePoint, midpoint } from "../geometry";
+import {
+  angleAt,
+  distance,
+  isFinitePoint,
+  midpoint,
+  mostVisibleBodySide,
+  normalizedLungeStanceSeparation,
+  torsoSegmentForMode,
+  wholeBodyFrameDeviation,
+} from "../geometry";
+import { MEASUREMENT_THRESHOLDS } from "../measurement-registry";
 
-export const CALIBRATION_SAMPLE_TARGET = 12;
+export const CALIBRATION_SAMPLE_TARGET = MEASUREMENT_THRESHOLDS.calibration.sampleTarget;
 
 export function createCalibrationProfile(
   mode: AnalysisMode,
@@ -39,7 +49,8 @@ export class CalibrationWindow {
     mode: AnalysisMode,
     view: CameraView,
     mirroredPreview: boolean,
-    targetSamples = CALIBRATION_SAMPLE_TARGET,
+    targetSamples: number = CALIBRATION_SAMPLE_TARGET,
+    private readonly startedAtMs: number = -Infinity,
   ) {
     this.mode = mode;
     this.view = view;
@@ -49,6 +60,7 @@ export class CalibrationWindow {
   }
 
   add(observation: FrameObservation): CalibrationProfile {
+    if (!this.acceptsTimestamp(observation.timestampMs)) return this.profile(null);
     const confidence = assessConfidence(observation, this.mode);
     const timestampGap =
       this.lastTimestampMs === null ? null : observation.timestampMs - this.lastTimestampMs;
@@ -57,9 +69,12 @@ export class CalibrationWindow {
       observation.mirroredPreview !== this.mirroredPreview ||
       observation.viewConfidence < MIN_OBSERVED_VIEW_CONFIDENCE ||
       !isObservedViewCompatible(this.mode, this.view, observation.observedView) ||
-      (timestampGap !== null && (timestampGap <= 0 || timestampGap > 1_000)) ||
+      (timestampGap !== null &&
+        (timestampGap <= 0 ||
+          timestampGap > MEASUREMENT_THRESHOLDS.calibration.maximumSampleGapMs)) ||
       confidence.state === "insufficient" ||
-      confidence.state === "unsupported"
+      confidence.state === "unsupported" ||
+      (this.mode !== "desk" && wholeBodyFrameDeviation(observation.landmarks, this.mode) > 0)
     ) {
       this.samples = [];
       this.lastTimestampMs = observation.timestampMs;
@@ -68,17 +83,17 @@ export class CalibrationWindow {
     this.lastTimestampMs = observation.timestampMs;
     this.observedView = observation.observedView;
     this.viewConfidence = observation.viewConfidence;
-    const shoulders = midpoint(
-      observation.landmarks.leftShoulder,
-      observation.landmarks.rightShoulder,
-    );
-    const hips = midpoint(observation.landmarks.leftHip, observation.landmarks.rightHip);
-    if (!isFinitePoint(shoulders) || !isFinitePoint(hips) || distance(shoulders, hips) < 1e-6) {
+    const { shoulder, hip } = torsoSegmentForMode(observation.landmarks, this.mode);
+    if (
+      !isFinitePoint(shoulder) ||
+      !isFinitePoint(hip) ||
+      distance(shoulder, hip) < MEASUREMENT_THRESHOLDS.geometry.minimumDistance
+    ) {
       this.samples = [];
       return this.profile(null);
     }
-    const torso = Math.hypot(shoulders.x - hips.x, shoulders.y - hips.y);
-    if (!Number.isFinite(torso) || torso < 1e-6) {
+    const torso = Math.hypot(shoulder.x - hip.x, shoulder.y - hip.y);
+    if (!Number.isFinite(torso) || torso < MEASUREMENT_THRESHOLDS.geometry.minimumDistance) {
       this.samples = [];
       return this.profile(null);
     }
@@ -126,6 +141,10 @@ export class CalibrationWindow {
     this.lastTimestampMs = null;
   }
 
+  acceptsTimestamp(timestampMs: number): boolean {
+    return Number.isFinite(timestampMs) && timestampMs >= this.startedAtMs;
+  }
+
   private profile(
     completed: { completedAtMs: number; baseline: Record<string, number> } | null,
   ): CalibrationProfile {
@@ -146,27 +165,41 @@ export class CalibrationWindow {
     const torsos = this.samples.map((sample) => sample.torso);
     const min = Math.min(...torsos);
     const max = Math.max(...torsos);
-    if (max - min > Math.max(0.035, min * 0.16)) return false;
+    if (
+      max - min >
+      Math.max(
+        MEASUREMENT_THRESHOLDS.calibration.torsoAbsoluteRange,
+        min * MEASUREMENT_THRESHOLDS.calibration.torsoRelativeRange,
+      )
+    )
+      return false;
     if (this.mode === "desk") {
       return metricsStayWithinRange(this.samples, {
-        deskHeadOffset: 0.08,
-        deskShoulderTilt: 0.08,
-        deskTorsoLean: 0.08,
+        deskHeadOffset: MEASUREMENT_THRESHOLDS.calibration.deskMetricRange,
+        deskShoulderTilt: MEASUREMENT_THRESHOLDS.calibration.deskMetricRange,
+        deskTorsoLean: MEASUREMENT_THRESHOLDS.calibration.deskMetricRange,
       });
     }
     if (this.mode === "standing") {
       return metricsStayWithinRange(this.samples, {
-        standingHeadOffset: 0.1,
-        standingBodyLean: 0.06,
-        standingShoulderTilt: 0.1,
-        standingHipTilt: 0.1,
+        standingHeadOffset: MEASUREMENT_THRESHOLDS.calibration.standingHeadRange,
+        standingBodyLean: MEASUREMENT_THRESHOLDS.calibration.standingBodyLeanRange,
+        standingShoulderTilt: MEASUREMENT_THRESHOLDS.calibration.standingTiltRange,
+        standingHipTilt: MEASUREMENT_THRESHOLDS.calibration.standingTiltRange,
       });
     }
     const metrics = this.samples.map((sample) => sample.movementMetric);
     if (metrics.some((value) => value === undefined)) return false;
     const minMetric = Math.min(...(metrics as number[]));
     const maxMetric = Math.max(...(metrics as number[]));
-    if (maxMetric - minMetric > Math.max(8, Math.abs(minMetric) * 0.08)) return false;
+    if (
+      maxMetric - minMetric >
+      Math.max(
+        MEASUREMENT_THRESHOLDS.calibration.movementAbsoluteRangeDegrees,
+        Math.abs(minMetric) * MEASUREMENT_THRESHOLDS.calibration.movementRelativeRange,
+      )
+    )
+      return false;
     const extraKeys =
       this.mode === "lunge" ? ["stanceSeparation"] : this.mode === "curl" ? ["elbowFlare"] : [];
     for (const key of extraKeys) {
@@ -174,7 +207,14 @@ export class CalibrationWindow {
       if (values.some((value) => value === undefined)) return false;
       const minValue = Math.min(...(values as number[]));
       const maxValue = Math.max(...(values as number[]));
-      if (maxValue - minValue > Math.max(0.035, Math.abs(minValue) * 0.16)) return false;
+      if (
+        maxValue - minValue >
+        Math.max(
+          MEASUREMENT_THRESHOLDS.calibration.extraMetricAbsoluteRange,
+          Math.abs(minValue) * MEASUREMENT_THRESHOLDS.calibration.extraMetricRelativeRange,
+        )
+      )
+        return false;
     }
     return true;
   }
@@ -209,7 +249,8 @@ function deskCalibrationMetrics(observation: FrameObservation): Record<string, n
   const ears = midpoint(landmarks.leftEar, landmarks.rightEar);
   if (!isFinitePoint(shoulders) || !isFinitePoint(hips) || !isFinitePoint(ears)) return null;
   const torso = distance(shoulders, hips);
-  if (!Number.isFinite(torso) || torso < 1e-6) return null;
+  if (!Number.isFinite(torso) || torso < MEASUREMENT_THRESHOLDS.geometry.minimumDistance)
+    return null;
   const metrics = {
     deskHeadOffset: (ears.x - shoulders.x) / torso,
     deskShoulderTilt: (landmarks.leftShoulder.y - landmarks.rightShoulder.y) / torso,
@@ -234,11 +275,16 @@ function standingCalibrationMetrics(observation: FrameObservation): Record<strin
   }
   const torso = distance(shoulders, hips);
   const bodyHeight = Math.max(
-    0.001,
+    MEASUREMENT_THRESHOLDS.geometry.minimumNormalizedScale,
     Math.max(landmarks.leftAnkle.y, landmarks.rightAnkle.y) -
       Math.min(landmarks.nose.y, landmarks.leftEar.y, landmarks.rightEar.y),
   );
-  if (!Number.isFinite(torso) || torso < 1e-6 || !Number.isFinite(bodyHeight)) return null;
+  if (
+    !Number.isFinite(torso) ||
+    torso < MEASUREMENT_THRESHOLDS.geometry.minimumDistance ||
+    !Number.isFinite(bodyHeight)
+  )
+    return null;
   const metrics = {
     standingHeadOffset: (ears.x - shoulders.x) / torso,
     standingBodyLean: Math.abs(shoulders.x - ankles.x) / bodyHeight,
@@ -276,7 +322,15 @@ function calibrationMovementMetric(
       Math.min(landmarks.rightKnee.visibility, landmarks.rightKnee.presence),
     );
   }
-  if (mode === "pushup" || mode === "curl") {
+  if (mode === "pushup") {
+    const side = mostVisibleBodySide(landmarks, mode);
+    return angleAt(
+      landmarks[`${side}Shoulder`],
+      landmarks[`${side}Elbow`],
+      landmarks[`${side}Wrist`],
+    );
+  }
+  if (mode === "curl") {
     return chooseAngle(
       angleAt(landmarks.leftShoulder, landmarks.leftElbow, landmarks.leftWrist),
       angleAt(landmarks.rightShoulder, landmarks.rightElbow, landmarks.rightWrist),
@@ -285,9 +339,12 @@ function calibrationMovementMetric(
     );
   }
   if (mode === "plank") {
-    const left = angleAt(landmarks.leftShoulder, landmarks.leftHip, landmarks.leftAnkle);
-    const right = angleAt(landmarks.rightShoulder, landmarks.rightHip, landmarks.rightAnkle);
-    return left === null ? right : right === null ? left : Math.min(left, right);
+    const side = mostVisibleBodySide(landmarks, mode);
+    return angleAt(
+      landmarks[`${side}Shoulder`],
+      landmarks[`${side}Hip`],
+      landmarks[`${side}Ankle`],
+    );
   }
   return null;
 }
@@ -297,18 +354,12 @@ function calibrationExtraMetrics(
   observation: FrameObservation,
 ): Record<string, number> | null {
   if (mode === "lunge") {
-    const projectedSeparation = Math.hypot(
-      observation.landmarks.leftAnkle.x - observation.landmarks.rightAnkle.x,
-      observation.landmarks.leftAnkle.y - observation.landmarks.rightAnkle.y,
+    const stanceSeparation = normalizedLungeStanceSeparation(
+      observation.landmarks,
+      observation.worldLandmarks,
+      observation.cameraView,
     );
-    const worldSeparation = observation.worldLandmarks
-      ? Math.hypot(
-          observation.worldLandmarks.leftAnkle.x - observation.worldLandmarks.rightAnkle.x,
-          observation.worldLandmarks.leftAnkle.z - observation.worldLandmarks.rightAnkle.z,
-        )
-      : 0;
-    const stanceSeparation = Math.max(projectedSeparation, worldSeparation);
-    return Number.isFinite(stanceSeparation) ? { stanceSeparation } : null;
+    return stanceSeparation === null ? null : { stanceSeparation };
   }
   if (mode === "curl") {
     const shoulders = midpoint(
@@ -317,7 +368,8 @@ function calibrationExtraMetrics(
     );
     const hips = midpoint(observation.landmarks.leftHip, observation.landmarks.rightHip);
     const torso = Math.hypot(shoulders.x - hips.x, shoulders.y - hips.y);
-    if (!Number.isFinite(torso) || torso < 1e-6) return null;
+    if (!Number.isFinite(torso) || torso < MEASUREMENT_THRESHOLDS.geometry.minimumDistance)
+      return null;
     const left = Math.abs(observation.landmarks.leftElbow.x - observation.landmarks.leftShoulder.x);
     const right = Math.abs(
       observation.landmarks.rightElbow.x - observation.landmarks.rightShoulder.x,

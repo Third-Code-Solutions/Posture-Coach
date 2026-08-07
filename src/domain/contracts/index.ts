@@ -1,3 +1,5 @@
+import { MEASUREMENT_THRESHOLDS, type MeasurementRuleId } from "../measurement-registry";
+
 export const LANDMARK_NAMES = [
   "nose",
   "leftEyeInner",
@@ -43,7 +45,8 @@ export type MovementPhase = "ready" | "eccentric" | "bottom" | "concentric" | "h
 export type ConfidenceState = "high" | "usable" | "insufficient" | "unsupported";
 export type EvaluationStatus = "valid" | "insufficient_evidence" | "unsupported_view";
 
-export const MIN_OBSERVED_VIEW_CONFIDENCE = 0.4;
+export const MIN_OBSERVED_VIEW_CONFIDENCE =
+  MEASUREMENT_THRESHOLDS.confidence.minimumObservedViewConfidence;
 
 export interface Point3D {
   x: number;
@@ -105,23 +108,26 @@ export interface CalibrationProfile {
   baseline: Readonly<Record<string, number>>;
 }
 
-export type IssueCode =
-  | "standing_head_alignment"
-  | "standing_trunk_alignment"
-  | "standing_lateral_asymmetry"
-  | "head_forward"
-  | "neck_inclination"
-  | "shoulder_imbalance"
-  | "torso_inclination"
-  | "prolonged_slouch"
-  | "squat_depth"
-  | "squat_knee_alignment"
-  | "plank_alignment"
-  | "pushup_body_line"
-  | "pushup_depth"
-  | "lunge_alignment"
-  | "curl_control"
-  | "positioning";
+export const ISSUE_CODES = [
+  "standing_head_alignment",
+  "standing_trunk_alignment",
+  "standing_lateral_asymmetry",
+  "head_forward",
+  "neck_inclination",
+  "shoulder_imbalance",
+  "torso_inclination",
+  "prolonged_slouch",
+  "squat_depth",
+  "squat_knee_alignment",
+  "plank_alignment",
+  "pushup_body_line",
+  "pushup_depth",
+  "lunge_alignment",
+  "curl_control",
+  "positioning",
+] as const;
+
+export type IssueCode = (typeof ISSUE_CODES)[number];
 
 export type RejectionReason =
   | "insufficient_evidence"
@@ -132,6 +138,7 @@ export type RejectionReason =
 
 export interface EvaluationIssue {
   code: IssueCode;
+  measurementRuleId: MeasurementRuleId;
   label: string;
   severity: 1 | 2 | 3;
   evidence: number;
@@ -147,6 +154,7 @@ export interface FeedbackMessage {
   title: string;
   body: string;
   issueCode?: IssueCode;
+  measurementRuleIds?: readonly MeasurementRuleId[];
   evidenceIds?: readonly string[];
 }
 
@@ -157,6 +165,7 @@ export interface EvaluationResult {
   confidence: ConfidenceAssessment;
   phase: MovementPhase;
   issues: readonly EvaluationIssue[];
+  decisionRuleIds: readonly MeasurementRuleId[];
   feedback: FeedbackMessage;
   validRep: boolean;
   rejectedRep: RejectionReason | null;
@@ -193,7 +202,7 @@ export const MODE_DESCRIPTIONS: Record<AnalysisMode, string> = {
   squat: "Practice controlled range and knee tracking.",
   plank: "Hold a long, supported body line.",
   pushup: "Build consistent depth without rushing the floor position.",
-  lunge: "Find steady balance and a quiet front knee.",
+  lunge: "Find steady balance and keep each knee tracking with its foot.",
   curl: "Keep the elbow steady and the lift controlled.",
 };
 
@@ -235,9 +244,16 @@ export const REQUIRED_LANDMARKS: Record<AnalysisMode, readonly LandmarkName[]> =
     "rightKnee",
     "leftAnkle",
     "rightAnkle",
+    "leftHeel",
+    "rightHeel",
+    "leftFootIndex",
+    "rightFootIndex",
   ],
   desk: ["nose", "leftEar", "rightEar", "leftShoulder", "rightShoulder", "leftHip", "rightHip"],
   squat: [
+    "nose",
+    "leftEar",
+    "rightEar",
     "leftShoulder",
     "rightShoulder",
     "leftHip",
@@ -246,9 +262,30 @@ export const REQUIRED_LANDMARKS: Record<AnalysisMode, readonly LandmarkName[]> =
     "rightKnee",
     "leftAnkle",
     "rightAnkle",
+    "leftHeel",
+    "rightHeel",
+    "leftFootIndex",
+    "rightFootIndex",
   ],
-  plank: ["leftShoulder", "rightShoulder", "leftHip", "rightHip", "leftAnkle", "rightAnkle"],
+  plank: [
+    "nose",
+    "leftEar",
+    "rightEar",
+    "leftShoulder",
+    "rightShoulder",
+    "leftHip",
+    "rightHip",
+    "leftAnkle",
+    "rightAnkle",
+    "leftHeel",
+    "rightHeel",
+    "leftFootIndex",
+    "rightFootIndex",
+  ],
   pushup: [
+    "nose",
+    "leftEar",
+    "rightEar",
     "leftShoulder",
     "rightShoulder",
     "leftElbow",
@@ -259,8 +296,15 @@ export const REQUIRED_LANDMARKS: Record<AnalysisMode, readonly LandmarkName[]> =
     "rightHip",
     "leftAnkle",
     "rightAnkle",
+    "leftHeel",
+    "rightHeel",
+    "leftFootIndex",
+    "rightFootIndex",
   ],
   lunge: [
+    "nose",
+    "leftEar",
+    "rightEar",
     "leftShoulder",
     "rightShoulder",
     "leftHip",
@@ -269,8 +313,15 @@ export const REQUIRED_LANDMARKS: Record<AnalysisMode, readonly LandmarkName[]> =
     "rightKnee",
     "leftAnkle",
     "rightAnkle",
+    "leftHeel",
+    "rightHeel",
+    "leftFootIndex",
+    "rightFootIndex",
   ],
   curl: [
+    "nose",
+    "leftEar",
+    "rightEar",
     "leftShoulder",
     "rightShoulder",
     "leftElbow",
@@ -279,6 +330,43 @@ export const REQUIRED_LANDMARKS: Record<AnalysisMode, readonly LandmarkName[]> =
     "rightWrist",
     "leftHip",
     "rightHip",
+    "leftAnkle",
+    "rightAnkle",
+    "leftHeel",
+    "rightHeel",
+    "leftFootIndex",
+    "rightFootIndex",
+  ],
+};
+
+export const ALTERNATIVE_REQUIRED_LANDMARK_GROUPS: Partial<
+  Record<AnalysisMode, readonly (readonly LandmarkName[])[]>
+> = {
+  plank: [
+    ["nose", "leftShoulder", "leftHip", "leftAnkle", "leftHeel", "leftFootIndex"],
+    ["nose", "rightShoulder", "rightHip", "rightAnkle", "rightHeel", "rightFootIndex"],
+  ],
+  pushup: [
+    [
+      "nose",
+      "leftShoulder",
+      "leftElbow",
+      "leftWrist",
+      "leftHip",
+      "leftAnkle",
+      "leftHeel",
+      "leftFootIndex",
+    ],
+    [
+      "nose",
+      "rightShoulder",
+      "rightElbow",
+      "rightWrist",
+      "rightHip",
+      "rightAnkle",
+      "rightHeel",
+      "rightFootIndex",
+    ],
   ],
 };
 

@@ -1,4 +1,5 @@
 import type { PoseDetector } from "@tensorflow-models/pose-detection/dist/pose_detector";
+import { MEASUREMENT_THRESHOLDS } from "../domain/measurement-registry";
 import type { PoseInferenceClient, PoseInferenceClientOptions } from "./inference-client";
 import { createTfjsPoseDetector, serializeTfjsPose } from "./tfjs-runtime";
 
@@ -85,7 +86,7 @@ export class PoseMainThreadClient implements PoseInferenceClient {
       if (this.disposed) return;
       const poses = await detector.estimatePoses(
         frame,
-        { maxPoses: 1, flipHorizontal: false },
+        { maxPoses: MEASUREMENT_THRESHOLDS.inference.maximumPoseCount, flipHorizontal: false },
         timestampMs,
       );
       if (this.disposed) return;

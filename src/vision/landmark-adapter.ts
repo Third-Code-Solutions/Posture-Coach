@@ -2,6 +2,7 @@ import type { CameraView, FrameObservation, LandmarkSet, Point3D, SourceKind } f
 import {
   createEmptyLandmarkSet,
   LANDMARK_NAMES,
+  MEASUREMENT_THRESHOLDS,
   MIN_OBSERVED_VIEW_CONFIDENCE,
   midpoint,
 } from "../domain";
@@ -22,7 +23,9 @@ function clamp(value: number): number {
 
 function finiteSegment(a: Point3D, b: Point3D): number | null {
   const value = Math.hypot(a.x - b.x, a.y - b.y);
-  return Number.isFinite(value) && value > 1e-6 ? value : null;
+  return Number.isFinite(value) && value > MEASUREMENT_THRESHOLDS.geometry.minimumDistance
+    ? value
+    : null;
 }
 
 /**
@@ -44,29 +47,56 @@ export function estimateCameraView(
     return { view: "unknown", confidence: 0 };
   }
 
-  const widthRatio = (shoulderWidth * 0.65 + hipWidth * 0.35) / torso;
+  const widthRatio =
+    (shoulderWidth * MEASUREMENT_THRESHOLDS.viewEstimate.shoulderWidthWeight +
+      hipWidth * MEASUREMENT_THRESHOLDS.viewEstimate.hipWidthWeight) /
+    torso;
   const shoulderDepth =
     worldLandmarks === undefined
       ? 0
       : Math.abs(worldLandmarks.leftShoulder.z - worldLandmarks.rightShoulder.z);
-  const bodyQuality = Math.min(
-    landmarks.leftShoulder.visibility,
-    landmarks.rightShoulder.visibility,
-    landmarks.leftHip.visibility,
-    landmarks.rightHip.visibility,
-  );
+  const bodyQuality =
+    (landmarks.leftShoulder.visibility +
+      landmarks.rightShoulder.visibility +
+      landmarks.leftHip.visibility +
+      landmarks.rightHip.visibility) /
+    4;
   const sideEvidence =
-    clamp((0.58 - widthRatio) / 0.28) * 0.72 + clamp(shoulderDepth / 0.35) * 0.28;
+    clamp(
+      (MEASUREMENT_THRESHOLDS.viewEstimate.sideWidthCenter - widthRatio) /
+        MEASUREMENT_THRESHOLDS.viewEstimate.sideWidthSpan,
+    ) *
+      MEASUREMENT_THRESHOLDS.viewEstimate.planarEvidenceWeight +
+    clamp(shoulderDepth / MEASUREMENT_THRESHOLDS.viewEstimate.shoulderDepthScale) *
+      MEASUREMENT_THRESHOLDS.viewEstimate.depthEvidenceWeight;
   const frontEvidence =
-    clamp((widthRatio - 0.48) / 0.3) * 0.72 + clamp(1 - shoulderDepth / 0.35) * 0.28;
+    clamp(
+      (widthRatio - MEASUREMENT_THRESHOLDS.viewEstimate.frontWidthCenter) /
+        MEASUREMENT_THRESHOLDS.viewEstimate.frontWidthSpan,
+    ) *
+      MEASUREMENT_THRESHOLDS.viewEstimate.planarEvidenceWeight +
+    clamp(1 - shoulderDepth / MEASUREMENT_THRESHOLDS.viewEstimate.shoulderDepthScale) *
+      MEASUREMENT_THRESHOLDS.viewEstimate.depthEvidenceWeight;
   const threeQuarterEvidence = 1 - Math.abs(frontEvidence - sideEvidence);
-  const best = Math.max(sideEvidence, frontEvidence, threeQuarterEvidence * 0.72);
+  const best = Math.max(
+    sideEvidence,
+    frontEvidence,
+    threeQuarterEvidence * MEASUREMENT_THRESHOLDS.viewEstimate.threeQuarterEvidenceWeight,
+  );
   const confidence = clamp(best * bodyQuality);
   if (confidence < MIN_OBSERVED_VIEW_CONFIDENCE) return { view: "unknown", confidence };
-  if (sideEvidence >= frontEvidence && sideEvidence >= threeQuarterEvidence * 0.72) {
+  if (
+    sideEvidence >= frontEvidence &&
+    sideEvidence >=
+      threeQuarterEvidence * MEASUREMENT_THRESHOLDS.viewEstimate.threeQuarterEvidenceWeight
+  ) {
     return { view: "side", confidence };
   }
-  if (frontEvidence >= sideEvidence && frontEvidence >= threeQuarterEvidence * 0.72) {
+  if (
+    frontEvidence >= sideEvidence &&
+    frontEvidence >=
+      threeQuarterEvidence * MEASUREMENT_THRESHOLDS.viewEstimate.threeQuarterEvidenceWeight
+  ) {
     return { view: "front", confidence };
   }
   return { view: "three-quarter", confidence };

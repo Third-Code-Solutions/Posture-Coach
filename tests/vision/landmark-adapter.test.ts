@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LANDMARK_NAMES } from "../../src/domain";
+import { LANDMARK_NAMES, MEASUREMENT_THRESHOLDS } from "../../src/domain";
 import { createObservation, estimateCameraView, normalizeLandmarks } from "../../src/vision";
 import { makeLandmarks } from "../domain/fixtures";
 
@@ -55,5 +55,17 @@ describe("MediaPipe landmark adapter", () => {
       rightHip: { x: 0.505 },
     });
     expect(estimateCameraView(side).view).toBe("side");
+  });
+
+  it("rejects view segments below the registry geometry floor", () => {
+    const subMinimum = MEASUREMENT_THRESHOLDS.geometry.minimumDistance / 2;
+    const degenerate = makeLandmarks({
+      leftShoulder: { x: 0.5 },
+      rightShoulder: { x: 0.5 + subMinimum },
+      leftHip: { x: 0.5 },
+      rightHip: { x: 0.5 + subMinimum },
+    });
+
+    expect(estimateCameraView(degenerate)).toEqual({ view: "unknown", confidence: 0 });
   });
 });

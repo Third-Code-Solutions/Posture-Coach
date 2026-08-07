@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type AnalysisMode, type IssueCode } from "../../src/domain";
+import { ISSUE_CODES, type AnalysisMode, measurementRulesForIssue } from "../../src/domain";
 import {
   EVIDENCE_CATEGORIES,
   EVIDENCE_CATEGORY_LABELS,
@@ -71,31 +71,16 @@ describe("offline posture evidence cache", () => {
   });
 
   it("maps every live evaluator issue to cached evidence", () => {
-    const issueCodes: IssueCode[] = [
-      "standing_head_alignment",
-      "standing_trunk_alignment",
-      "standing_lateral_asymmetry",
-      "head_forward",
-      "neck_inclination",
-      "shoulder_imbalance",
-      "torso_inclination",
-      "prolonged_slouch",
-      "squat_depth",
-      "squat_knee_alignment",
-      "plank_alignment",
-      "pushup_body_line",
-      "pushup_depth",
-      "lunge_alignment",
-      "curl_control",
-      "positioning",
-    ];
-    for (const issueCode of issueCodes) {
+    for (const issueCode of ISSUE_CODES) {
       expect(ISSUE_EVIDENCE_IDS[issueCode].length).toBeGreaterThan(0);
       expect(evidenceForIds(ISSUE_EVIDENCE_IDS[issueCode]).length).toBe(
         ISSUE_EVIDENCE_IDS[issueCode].length,
       );
       expect(ISSUE_MEASUREMENT_STATUS[issueCode].validationStatus).toBe("unvalidated");
       expect(ISSUE_MEASUREMENT_STATUS[issueCode].note.length).toBeGreaterThan(40);
+      expect(ISSUE_MEASUREMENT_STATUS[issueCode].ruleIds).toEqual(
+        measurementRulesForIssue(issueCode).map((rule) => rule.id),
+      );
     }
     expect(ISSUE_MEASUREMENT_STATUS.positioning.thresholdProvenance).toBe("operational-only");
     expect(ISSUE_MEASUREMENT_STATUS.squat_depth.thresholdProvenance).toBe("product-heuristic");

@@ -1,12 +1,12 @@
 import type {
   AnalysisMode,
+  AbstentionReason,
   CameraView,
   CalibrationProfile,
   EvaluationIssue,
   EvaluationResult,
   FeedbackMessage,
   FrameObservation,
-  IssueCode,
   MovementPhase,
   Point3D,
   RejectionReason,
@@ -17,12 +17,28 @@ import {
   SUPPORTED_VIEWS,
 } from "../contracts";
 import { assessConfidence } from "../confidence";
+import {
+  MEASUREMENT_RULE_BY_ID,
+  MEASUREMENT_RULES,
+  MEASUREMENT_THRESHOLDS,
+  type MeasurementRuleId,
+} from "../measurement-registry";
 import { LandmarkSmoother, PersistenceGate } from "../temporal";
-import { angleAt, isFinitePoint, midpoint, verticalDeviation } from "../geometry";
+import {
+  angleAt,
+  isFinitePoint,
+  midpoint,
+  mostVisibleBodySide,
+  normalizedLungeStanceSeparation,
+  torsoSegmentForMode,
+  verticalDeviation,
+  wholeBodyFrameDeviation,
+} from "../geometry";
 import { evidenceIdsForIssue, evidenceIdsForMode } from "../../knowledge";
 
 type RawIssue = Omit<EvaluationIssue, "persistenceMs">;
 type ExerciseMode = Exclude<AnalysisMode, "desk" | "standing">;
+type RepMode = Exclude<ExerciseMode, "plank">;
 type ComputedFrame = {
   status: EvaluationResult["status"];
   phase: MovementPhase;
@@ -30,6 +46,7 @@ type ComputedFrame = {
   metrics: Record<string, number>;
   validRep: boolean;
   rejectedRep: RejectionReason | null;
+  decisionRuleIds?: readonly MeasurementRuleId[];
 };
 type ExerciseState = {
   phase: MovementPhase;
@@ -38,15 +55,12 @@ type ExerciseState = {
   candidateStartedAtMs: number | null;
   candidateMinMetric: number | null;
   rangeReached: boolean;
-  alignmentStartedAtMs: number | null;
-  alignmentUnstable: boolean;
+  alignmentStartedAtByRule: Map<MeasurementRuleId, number>;
+  alignmentUnstableRuleIds: Set<MeasurementRuleId>;
+  evaluatedAlignmentRuleIds: Set<MeasurementRuleId>;
   lastRepTimestampMs: number;
   lastTimestamp: number;
 };
-
-const MIN_REP_DWELL_MS = 250;
-const MIN_REP_COOLDOWN_MS = 550;
-const MIN_ALIGNMENT_PERSIST_MS = 450;
 
 const CAUTIOUS =
   "This is a coaching cue, not a diagnosis. Try adjusting gently and stop if you feel pain.";
@@ -58,21 +72,27 @@ const defaultExerciseState = (): ExerciseState => ({
   candidateStartedAtMs: null,
   candidateMinMetric: null,
   rangeReached: false,
-  alignmentStartedAtMs: null,
-  alignmentUnstable: false,
+  alignmentStartedAtByRule: new Map(),
+  alignmentUnstableRuleIds: new Set(),
+  evaluatedAlignmentRuleIds: new Set(),
   lastRepTimestampMs: -Infinity,
   lastTimestamp: -1,
 });
 
 function issue(
-  code: IssueCode,
+  measurementRuleId: MeasurementRuleId,
   label: string,
   evidence: number,
   threshold: number,
   severity: 1 | 2 | 3,
   correction: string,
 ): RawIssue {
-  return { code, label, evidence, threshold, severity, correction };
+  const rule = MEASUREMENT_RULE_BY_ID[measurementRuleId];
+  if (rule.issueCodes.length !== 1) {
+    throw new Error(`Measurement rule ${measurementRuleId} must map to exactly one issue code.`);
+  }
+  const code = rule.issueCodes[0];
+  return { code, measurementRuleId, label, evidence, threshold, severity, correction };
 }
 
 function torsoMetrics(observation: FrameObservation): {
@@ -85,7 +105,10 @@ function torsoMetrics(observation: FrameObservation): {
     observation.landmarks.rightShoulder,
   );
   const hips = midpoint(observation.landmarks.leftHip, observation.landmarks.rightHip);
-  const torso = Math.max(0.001, Math.hypot(shoulders.x - hips.x, shoulders.y - hips.y));
+  const torso = Math.max(
+    MEASUREMENT_THRESHOLDS.geometry.minimumNormalizedScale,
+    Math.hypot(shoulders.x - hips.x, shoulders.y - hips.y),
+  );
   const shoulderTilt =
     Math.abs(observation.landmarks.leftShoulder.y - observation.landmarks.rightShoulder.y) / torso;
   const ear = midpoint(observation.landmarks.leftEar, observation.landmarks.rightEar);
@@ -103,26 +126,30 @@ function deskIssues(
   const baselineTorso = baseline.torso;
   const torsoRatio = baselineTorso ? metrics.torso / baselineTorso : 1;
   metrics.torsoRatio = torsoRatio;
-  if (baselineTorso && (torsoRatio < 0.65 || torsoRatio > 1.35)) {
+  if (
+    baselineTorso &&
+    (torsoRatio < MEASUREMENT_THRESHOLDS.framing.minimumTorsoRatio ||
+      torsoRatio > MEASUREMENT_THRESHOLDS.framing.maximumTorsoRatio)
+  ) {
     issues.push(
       issue(
-        "positioning",
+        "framing-torso-distance",
         "Return to your calibrated distance",
         Math.abs(torsoRatio - 1),
-        0.35,
+        MEASUREMENT_THRESHOLDS.framing.torsoRatioDeviation,
         2,
         "Keep your full body in frame and return to the distance used during calibration.",
       ),
     );
   }
   if (observation.cameraView === "front" || observation.cameraView === "three-quarter") {
-    if (metrics.shoulderTilt > 0.07) {
+    if (metrics.shoulderTilt > MEASUREMENT_THRESHOLDS.desk.shoulderTiltRatio) {
       issues.push(
         issue(
-          "shoulder_imbalance",
+          "desk-shoulder-level",
           "Shoulder level",
           metrics.shoulderTilt,
-          0.07,
+          MEASUREMENT_THRESHOLDS.desk.shoulderTiltRatio,
           2,
           "Let both shoulders soften down and level out. Keep your screen in front of you.",
         ),
@@ -137,49 +164,49 @@ function deskIssues(
         midpoint(observation.landmarks.leftShoulder, observation.landmarks.rightShoulder),
         midpoint(observation.landmarks.leftHip, observation.landmarks.rightHip),
       ) ?? 0;
-    if (metrics.headOffset > 0.12) {
+    if (metrics.headOffset > MEASUREMENT_THRESHOLDS.desk.headOffsetRatio) {
       issues.push(
         issue(
-          "head_forward",
+          "desk-head-forward",
           "Head-forward tendency",
           metrics.headOffset,
-          0.12,
+          MEASUREMENT_THRESHOLDS.desk.headOffsetRatio,
           3,
           "Try bringing your head back over your ribs without forcing your chin.",
         ),
       );
     }
-    if (neck > 18) {
+    if (neck > MEASUREMENT_THRESHOLDS.desk.neckInclinationDegrees) {
       issues.push(
         issue(
-          "neck_inclination",
+          "desk-neck-inclination",
           "Neck inclination",
           neck,
-          18,
+          MEASUREMENT_THRESHOLDS.desk.neckInclinationDegrees,
           2,
           "Raise the screen toward eye level and let your gaze travel forward.",
         ),
       );
     }
-    if (torso > 14) {
+    if (torso > MEASUREMENT_THRESHOLDS.desk.torsoInclinationDegrees) {
       issues.push(
         issue(
-          "torso_inclination",
+          "desk-torso-inclination",
           "Torso inclination",
           torso,
-          14,
+          MEASUREMENT_THRESHOLDS.desk.torsoInclinationDegrees,
           2,
           "Try stacking your ribs over your hips and moving closer to your desk.",
         ),
       );
     }
-    if (torso > 20) {
+    if (torso > MEASUREMENT_THRESHOLDS.desk.prolongedTorsoInclinationDegrees) {
       issues.push(
         issue(
-          "prolonged_slouch",
+          "desk-prolonged-slouch",
           "Prolonged slouch",
           torso,
-          20,
+          MEASUREMENT_THRESHOLDS.desk.prolongedTorsoInclinationDegrees,
           3,
           "Reset gently: bring your ribs over your hips, then let your shoulders relax.",
         ),
@@ -200,43 +227,46 @@ function deskIssues(
 function calibrationFramingIssue(
   observation: FrameObservation,
   baseline: Readonly<Record<string, number>>,
+  mode: AnalysisMode,
 ): RawIssue | null {
   if (!baseline.torso) return null;
-  const shoulders = midpoint(
-    observation.landmarks.leftShoulder,
-    observation.landmarks.rightShoulder,
+  const { shoulder, hip } = torsoSegmentForMode(observation.landmarks, mode);
+  const torso = Math.max(
+    MEASUREMENT_THRESHOLDS.geometry.minimumNormalizedScale,
+    Math.hypot(shoulder.x - hip.x, shoulder.y - hip.y),
   );
-  const hips = midpoint(observation.landmarks.leftHip, observation.landmarks.rightHip);
-  const torso = Math.max(0.001, Math.hypot(shoulders.x - hips.x, shoulders.y - hips.y));
   const torsoRatio = torso / baseline.torso;
-  if (torsoRatio >= 0.65 && torsoRatio <= 1.35) return null;
+  if (
+    torsoRatio >= MEASUREMENT_THRESHOLDS.framing.minimumTorsoRatio &&
+    torsoRatio <= MEASUREMENT_THRESHOLDS.framing.maximumTorsoRatio
+  )
+    return null;
   return issue(
-    "positioning",
+    "framing-torso-distance",
     "Return to your calibrated distance",
     Math.abs(torsoRatio - 1),
-    0.35,
+    MEASUREMENT_THRESHOLDS.framing.torsoRatioDeviation,
     2,
     "Keep your full body in frame and return to the distance used during calibration.",
   );
 }
 
-function standingFramingIssue(
+function wholeBodyFramingIssue(
   observation: FrameObservation,
   baseline: Readonly<Record<string, number>>,
+  mode: Exclude<AnalysisMode, "desk">,
 ): RawIssue | null {
-  const torsoIssue = calibrationFramingIssue(observation, baseline);
+  const torsoIssue = calibrationFramingIssue(observation, baseline, mode);
   if (torsoIssue) return torsoIssue;
-  const { landmarks } = observation;
-  const top = Math.min(landmarks.nose.y, landmarks.leftEar.y, landmarks.rightEar.y);
-  const bottom = Math.max(landmarks.leftAnkle.y, landmarks.rightAnkle.y);
-  if (top > 0.02 && bottom < 0.985) return null;
+  const frameDeviation = wholeBodyFrameDeviation(observation.landmarks, mode);
+  if (frameDeviation === 0) return null;
   return issue(
-    "positioning",
+    "framing-whole-body",
     "Keep your whole body visible",
-    Math.max(0.02 - top, bottom - 0.985, 0),
+    frameDeviation,
     0,
     2,
-    "Step back or lower the phone slightly so your head and both feet have a little space from the frame edges.",
+    "Move or rotate the phone so your head and both feet have a little space from every frame edge.",
   );
 }
 
@@ -272,9 +302,7 @@ function chooseKneeAngle(observation: FrameObservation): number | null {
 }
 
 type LungeMetrics = {
-  frontKneeAngle: number;
-  rearKneeAngle: number;
-  kneeAngleGap: number;
+  moreFlexedKneeAngle: number;
   stanceSeparation: number;
 };
 
@@ -291,23 +319,16 @@ function lungeMetrics(observation: FrameObservation): LungeMetrics | null {
   );
   if (leftKneeAngle === null || rightKneeAngle === null) return null;
 
-  const projectedSeparation = Math.hypot(
-    observation.landmarks.leftAnkle.x - observation.landmarks.rightAnkle.x,
-    observation.landmarks.leftAnkle.y - observation.landmarks.rightAnkle.y,
+  const stanceSeparation = normalizedLungeStanceSeparation(
+    observation.landmarks,
+    observation.worldLandmarks,
+    observation.cameraView,
   );
-  const worldSeparation = observation.worldLandmarks
-    ? Math.hypot(
-        observation.worldLandmarks.leftAnkle.x - observation.worldLandmarks.rightAnkle.x,
-        observation.worldLandmarks.leftAnkle.z - observation.worldLandmarks.rightAnkle.z,
-      )
-    : 0;
-  const frontKneeAngle = Math.min(leftKneeAngle, rightKneeAngle);
-  const rearKneeAngle = Math.max(leftKneeAngle, rightKneeAngle);
+  if (stanceSeparation === null) return null;
+  const moreFlexedKneeAngle = Math.min(leftKneeAngle, rightKneeAngle);
   return {
-    frontKneeAngle,
-    rearKneeAngle,
-    kneeAngleGap: rearKneeAngle - frontKneeAngle,
-    stanceSeparation: Math.max(projectedSeparation, worldSeparation),
+    moreFlexedKneeAngle,
+    stanceSeparation,
   };
 }
 
@@ -335,6 +356,14 @@ function chooseElbowAngle(observation: FrameObservation): number | null {
   return leftScore >= rightScore ? left : right;
 }
 
+function elbowAngleForSide(observation: FrameObservation, side: "left" | "right"): number | null {
+  return angleAt(
+    observation.landmarks[`${side}Shoulder`],
+    observation.landmarks[`${side}Elbow`],
+    observation.landmarks[`${side}Wrist`],
+  );
+}
+
 function elbowFlare(observation: FrameObservation): number | null {
   const shoulders = midpoint(
     observation.landmarks.leftShoulder,
@@ -342,7 +371,8 @@ function elbowFlare(observation: FrameObservation): number | null {
   );
   const hips = midpoint(observation.landmarks.leftHip, observation.landmarks.rightHip);
   const torso = Math.hypot(shoulders.x - hips.x, shoulders.y - hips.y);
-  if (!Number.isFinite(torso) || torso < 1e-6) return null;
+  if (!Number.isFinite(torso) || torso < MEASUREMENT_THRESHOLDS.geometry.minimumDistance)
+    return null;
   const left = Math.abs(observation.landmarks.leftElbow.x - observation.landmarks.leftShoulder.x);
   const right = Math.abs(
     observation.landmarks.rightElbow.x - observation.landmarks.rightShoulder.x,
@@ -355,7 +385,7 @@ function projectedSegmentIsAvailable(a: Point3D, b: Point3D): boolean {
     isFinitePoint(a) &&
     isFinitePoint(b) &&
     Number.isFinite(Math.hypot(a.x - b.x, a.y - b.y)) &&
-    Math.hypot(a.x - b.x, a.y - b.y) >= 1e-6
+    Math.hypot(a.x - b.x, a.y - b.y) >= MEASUREMENT_THRESHOLDS.geometry.minimumDistance
   );
 }
 
@@ -387,9 +417,11 @@ function geometryIsAvailable(mode: AnalysisMode, observation: FrameObservation):
     );
   }
   if (mode === "plank" || mode === "pushup") {
-    const leftLine = bodyLineAngle(observation, "left");
-    const rightLine = bodyLineAngle(observation, "right");
-    return leftLine !== null && rightLine !== null;
+    const visibleSide = mostVisibleBodySide(landmarks, mode);
+    return (
+      bodyLineAngle(observation, visibleSide) !== null &&
+      (mode === "plank" || elbowAngleForSide(observation, visibleSide) !== null)
+    );
   }
   return (
     chooseElbowAngle(observation) !== null &&
@@ -409,42 +441,102 @@ function exerciseThresholds(
   if (mode === "plank") return { down: 0, entry: 0, up: 0 };
   const calibratedTop = baseline.movementMetric;
   if (!Number.isFinite(calibratedTop)) {
-    const down = mode === "squat" ? 105 : mode === "lunge" ? 110 : mode === "pushup" ? 100 : 75;
-    return { down, entry: Math.min(155, down + 30), up: 160 };
+    const down = MEASUREMENT_THRESHOLDS.exercise.defaultDownDegrees[mode];
+    return {
+      down,
+      entry: Math.min(
+        MEASUREMENT_THRESHOLDS.exercise.defaultEntryMaximumDegrees,
+        down + MEASUREMENT_THRESHOLDS.exercise.defaultEntryOffsetDegrees,
+      ),
+      up: MEASUREMENT_THRESHOLDS.exercise.defaultUpDegrees,
+    };
   }
-  const down =
-    mode === "squat"
-      ? bounded(calibratedTop - 62, 88, 125)
-      : mode === "lunge"
-        ? bounded(calibratedTop - 55, 95, 130)
-        : mode === "pushup"
-          ? bounded(calibratedTop - 65, 72, 115)
-          : bounded(calibratedTop - 82, 55, 105);
+  const range = MEASUREMENT_THRESHOLDS.exercise.calibratedDown[mode];
+  const down = bounded(calibratedTop - range.offset, range.minimum, range.maximum);
   return {
     down,
-    entry: Math.min(160, down + 28),
-    up: bounded(calibratedTop - 12, 145, 175),
+    entry: Math.min(
+      MEASUREMENT_THRESHOLDS.exercise.calibratedEntryMaximumDegrees,
+      down + MEASUREMENT_THRESHOLDS.exercise.calibratedEntryOffsetDegrees,
+    ),
+    up: bounded(
+      calibratedTop - MEASUREMENT_THRESHOLDS.exercise.calibratedUpOffsetDegrees,
+      MEASUREMENT_THRESHOLDS.exercise.calibratedUpMinimumDegrees,
+      MEASUREMENT_THRESHOLDS.exercise.calibratedUpMaximumDegrees,
+    ),
   };
 }
 
 function bodyLineTolerance(baseline: Readonly<Record<string, number>>): number {
   const calibratedLine = baseline.movementMetric;
-  return Number.isFinite(calibratedLine) ? Math.max(10, Math.abs(180 - calibratedLine) + 8) : 16;
+  return Number.isFinite(calibratedLine)
+    ? Math.max(
+        MEASUREMENT_THRESHOLDS.exercise.minimumBodyLineToleranceDegrees,
+        Math.abs(MEASUREMENT_THRESHOLDS.geometry.straightAngleDegrees - calibratedLine) +
+          MEASUREMENT_THRESHOLDS.exercise.calibratedBodyLineMarginDegrees,
+      )
+    : MEASUREMENT_THRESHOLDS.exercise.defaultBodyLineToleranceDegrees;
 }
 
 function lungeStanceThreshold(baseline: Readonly<Record<string, number>>): number {
-  return Math.max(0.18, (baseline.stanceSeparation ?? 0) * 0.65);
+  return Math.max(
+    MEASUREMENT_THRESHOLDS.exercise.minimumLungeStanceRatio,
+    (baseline.stanceSeparation ?? 0) *
+      MEASUREMENT_THRESHOLDS.exercise.calibratedLungeStanceMultiplier,
+  );
 }
 
 function curlFlareThreshold(baseline: Readonly<Record<string, number>>): number {
-  return Math.max(0.5, (baseline.elbowFlare ?? 0.28) + 0.22);
+  return Math.max(
+    MEASUREMENT_THRESHOLDS.exercise.minimumCurlFlareRatio,
+    (baseline.elbowFlare ?? MEASUREMENT_THRESHOLDS.exercise.fallbackCurlFlareBaseline) +
+      MEASUREMENT_THRESHOLDS.exercise.calibratedCurlFlareMargin,
+  );
 }
 
-function alignmentIssueCodes(mode: Exclude<ExerciseMode, "plank">): IssueCode[] {
-  if (mode === "squat") return ["squat_knee_alignment"];
-  if (mode === "lunge") return ["lunge_alignment"];
-  if (mode === "pushup") return ["pushup_body_line"];
-  return ["curl_control"];
+type ExerciseDecisionPolicy = {
+  rangeRuleId: MeasurementRuleId;
+  alignmentRuleIdsByView: Readonly<Partial<Record<CameraView, readonly MeasurementRuleId[]>>>;
+};
+
+const EXERCISE_DECISION_POLICY: Readonly<Record<RepMode, ExerciseDecisionPolicy>> = {
+  squat: {
+    rangeRuleId: "squat-range",
+    alignmentRuleIdsByView: {
+      front: ["squat-knee-tracking"],
+      "three-quarter": ["squat-knee-tracking"],
+    },
+  },
+  lunge: {
+    rangeRuleId: "lunge-range",
+    alignmentRuleIdsByView: {
+      front: ["lunge-split-stance", "lunge-knee-tracking"],
+      side: ["lunge-split-stance"],
+      "three-quarter": ["lunge-split-stance", "lunge-knee-tracking"],
+    },
+  },
+  pushup: {
+    rangeRuleId: "pushup-range",
+    alignmentRuleIdsByView: { side: ["pushup-body-line"] },
+  },
+  curl: {
+    rangeRuleId: "curl-range",
+    alignmentRuleIdsByView: { front: ["curl-elbow-flare"] },
+  },
+};
+
+function evaluatedDecisionRuleIds(
+  mode: AnalysisMode,
+  view: CameraView,
+): readonly MeasurementRuleId[] {
+  return MEASUREMENT_RULES.filter(
+    (rule) =>
+      rule.category !== "framing" &&
+      rule.id !== "rep-phase-timing" &&
+      rule.id !== "rep-alignment-persistence" &&
+      (rule.modes as readonly AnalysisMode[]).includes(mode) &&
+      (rule.views as readonly CameraView[]).includes(view),
+  ).map((rule) => rule.id);
 }
 
 function exerciseFrame(
@@ -454,7 +546,8 @@ function exerciseFrame(
   baseline: Readonly<Record<string, number>>,
 ): ComputedFrame {
   const issues: RawIssue[] = [];
-  const framingIssue = calibrationFramingIssue(observation, baseline);
+  const evaluatedAlignmentRuleIds = new Set<MeasurementRuleId>();
+  const framingIssue = calibrationFramingIssue(observation, baseline, mode);
   if (framingIssue) issues.push(framingIssue);
   const metrics: Record<string, number> = {};
   let metric: number | null = null;
@@ -481,34 +574,22 @@ function exerciseFrame(
 
   if (mode === "squat" || mode === "lunge") {
     const lunge = mode === "lunge" ? lungeMetrics(observation) : null;
-    metric = lunge?.frontKneeAngle ?? chooseKneeAngle(observation);
+    metric = mode === "lunge" ? (lunge?.moreFlexedKneeAngle ?? null) : chooseKneeAngle(observation);
     metrics.kneeAngle = metric ?? 0;
     if (lunge) {
-      metrics.frontKneeAngle = lunge.frontKneeAngle;
-      metrics.rearKneeAngle = lunge.rearKneeAngle;
-      metrics.kneeAngleGap = lunge.kneeAngleGap;
+      metrics.moreFlexedKneeAngle = lunge.moreFlexedKneeAngle;
       metrics.stanceSeparation = lunge.stanceSeparation;
+      evaluatedAlignmentRuleIds.add("lunge-split-stance");
       const stanceThreshold = lungeStanceThreshold(baseline);
       if (lunge.stanceSeparation < stanceThreshold) {
         issues.push(
           issue(
-            "lunge_alignment",
+            "lunge-split-stance",
             "Split stance",
             lunge.stanceSeparation,
             stanceThreshold,
             3,
-            "Step one foot forward and one foot back so the front leg can bend independently.",
-          ),
-        );
-      } else if (lunge.kneeAngleGap < 12) {
-        issues.push(
-          issue(
-            "lunge_alignment",
-            "Front-leg lead",
-            lunge.kneeAngleGap,
-            12,
-            3,
-            "Keep the front knee doing the work while the back knee stays lighter and more extended.",
+            "Step one foot forward and one foot back so the legs can bend independently.",
           ),
         );
       }
@@ -526,15 +607,18 @@ function exerciseFrame(
         Math.abs(observation.landmarks.rightKnee.x - rightMidpoint),
       );
       metrics.kneeAlignmentDeviation = kneeAlignmentDeviation;
-      if (kneeAlignmentDeviation > 0.12) {
+      evaluatedAlignmentRuleIds.add(
+        mode === "squat" ? "squat-knee-tracking" : "lunge-knee-tracking",
+      );
+      if (kneeAlignmentDeviation > MEASUREMENT_THRESHOLDS.exercise.kneeAlignmentDeviation) {
         issues.push(
           issue(
-            mode === "squat" ? "squat_knee_alignment" : "lunge_alignment",
-            mode === "squat" ? "Knee tracking" : "Front-knee tracking",
+            mode === "squat" ? "squat-knee-tracking" : "lunge-knee-tracking",
+            "Knee tracking",
             kneeAlignmentDeviation,
-            0.12,
+            MEASUREMENT_THRESHOLDS.exercise.kneeAlignmentDeviation,
             3,
-            "Keep the knee tracking in line with the middle of the foot instead of letting it drift inward or outward.",
+            "Keep each visible knee tracking near its hip-to-foot corridor instead of letting it drift inward or outward.",
           ),
         );
       }
@@ -543,41 +627,41 @@ function exerciseFrame(
       metric !== null &&
       observation.cameraView === "side" &&
       metric > downThreshold &&
-      metric < 140 &&
+      metric < MEASUREMENT_THRESHOLDS.exercise.partialRangeMaximumDegrees &&
       state.candidate
     ) {
       issues.push(
         issue(
-          mode === "squat" ? "squat_depth" : "lunge_alignment",
+          mode === "squat" ? "squat-range" : "lunge-range",
           "Range is not quite there",
           metric,
           downThreshold,
           2,
           mode === "squat"
             ? "Try sitting a little lower while keeping your feet grounded."
-            : "Lower with control and keep the front knee tracking over the foot.",
+            : "Lower with control and keep both visible knees moving steadily over their feet.",
         ),
       );
     }
   } else if (mode === "pushup" || mode === "curl") {
-    metric = chooseElbowAngle(observation);
+    const visibleSide = mode === "pushup" ? mostVisibleBodySide(observation.landmarks, mode) : null;
+    metric = visibleSide
+      ? elbowAngleForSide(observation, visibleSide)
+      : chooseElbowAngle(observation);
     metrics.elbowAngle = metric ?? 0;
     if (mode === "pushup") {
-      const leftLine = bodyLineAngle(observation, "left");
-      const rightLine = bodyLineAngle(observation, "right");
-      const line =
-        leftLine === null
-          ? rightLine
-          : rightLine === null
-            ? leftLine
-            : Math.min(leftLine, rightLine);
-      const deviation = line === null ? null : Math.abs(180 - line);
+      const line = bodyLineAngle(observation, visibleSide ?? "left");
+      const deviation =
+        line === null
+          ? null
+          : Math.abs(MEASUREMENT_THRESHOLDS.geometry.straightAngleDegrees - line);
       metrics.bodyLineAngle = line ?? 0;
       metrics.bodyLineDeviation = deviation ?? 0;
+      if (deviation !== null) evaluatedAlignmentRuleIds.add("pushup-body-line");
       if (deviation !== null && deviation > bodyLineTolerance(baseline)) {
         issues.push(
           issue(
-            "pushup_body_line",
+            "pushup-body-line",
             "Push-up body line",
             deviation,
             bodyLineTolerance(baseline),
@@ -591,12 +675,12 @@ function exerciseFrame(
       metric !== null &&
       mode === "pushup" &&
       metric > downThreshold &&
-      metric < 140 &&
+      metric < MEASUREMENT_THRESHOLDS.exercise.partialRangeMaximumDegrees &&
       state.candidate
     ) {
       issues.push(
         issue(
-          "pushup_depth",
+          "pushup-range",
           "Push-up depth",
           metric,
           downThreshold,
@@ -609,11 +693,12 @@ function exerciseFrame(
       mode === "curl" && observation.cameraView === "front" ? elbowFlare(observation) : null;
     if (flare !== null) {
       metrics.elbowFlare = flare;
+      evaluatedAlignmentRuleIds.add("curl-elbow-flare");
     }
     if (flare !== null && mode === "curl" && flare > curlFlareThreshold(baseline)) {
       issues.push(
         issue(
-          "curl_control",
+          "curl-elbow-flare",
           "Curl control",
           flare,
           curlFlareThreshold(baseline),
@@ -623,18 +708,19 @@ function exerciseFrame(
       );
     }
   } else if (mode === "plank") {
-    const leftLine = bodyLineAngle(observation, "left");
-    const rightLine = bodyLineAngle(observation, "right");
-    metric =
-      leftLine === null ? rightLine : rightLine === null ? leftLine : Math.min(leftLine, rightLine);
+    const visibleSide = mostVisibleBodySide(observation.landmarks, mode);
+    metric = bodyLineAngle(observation, visibleSide);
     metrics.bodyLineAngle = metric ?? 0;
     const lineTolerance = bodyLineTolerance(baseline);
-    if (metric !== null && Math.abs(180 - metric) > lineTolerance) {
+    if (
+      metric !== null &&
+      Math.abs(MEASUREMENT_THRESHOLDS.geometry.straightAngleDegrees - metric) > lineTolerance
+    ) {
       issues.push(
         issue(
-          "plank_alignment",
+          "plank-body-line",
           "Body line",
-          Math.abs(180 - metric),
+          Math.abs(MEASUREMENT_THRESHOLDS.geometry.straightAngleDegrees - metric),
           lineTolerance,
           3,
           "Brace gently and find one long line from shoulders through heels.",
@@ -653,7 +739,11 @@ function exerciseFrame(
         rejectedRep: "insufficient_evidence",
       };
     }
-    phase = metric !== null && Math.abs(180 - metric) <= lineTolerance ? "hold" : "paused";
+    phase =
+      metric !== null &&
+      Math.abs(MEASUREMENT_THRESHOLDS.geometry.straightAngleDegrees - metric) <= lineTolerance
+        ? "hold"
+        : "paused";
     state.lastTimestamp = timestampMs;
     return { status: "valid", phase, issues, metrics, validRep: false, rejectedRep: null };
   }
@@ -672,19 +762,34 @@ function exerciseFrame(
       rejectedRep: "insufficient_evidence",
     };
   }
-  const alignmentCodes = alignmentIssueCodes(mode);
+  const repMode = mode as RepMode;
+  const decisionPolicy = EXERCISE_DECISION_POLICY[repMode];
+  const trackedAlignmentRuleIds =
+    decisionPolicy.alignmentRuleIdsByView[observation.cameraView] ?? [];
+  const activeAlignmentRuleIds = new Set(
+    issues
+      .map((candidate) => candidate.measurementRuleId)
+      .filter((ruleId) => trackedAlignmentRuleIds.includes(ruleId)),
+  );
   if (state.candidate) {
+    for (const ruleId of evaluatedAlignmentRuleIds) {
+      state.evaluatedAlignmentRuleIds.add(ruleId);
+    }
     state.candidateMinMetric =
       state.candidateMinMetric === null ? metric : Math.min(state.candidateMinMetric, metric);
     if (metric <= downThreshold) state.rangeReached = true;
-    const alignmentActive = issues.some((candidate) => alignmentCodes.includes(candidate.code));
-    if (alignmentActive) {
-      state.alignmentStartedAtMs ??= timestampMs;
-      if (timestampMs - state.alignmentStartedAtMs >= MIN_ALIGNMENT_PERSIST_MS) {
-        state.alignmentUnstable = true;
+    for (const ruleId of state.alignmentStartedAtByRule.keys()) {
+      if (!activeAlignmentRuleIds.has(ruleId)) state.alignmentStartedAtByRule.delete(ruleId);
+    }
+    for (const ruleId of activeAlignmentRuleIds) {
+      const startedAtMs = state.alignmentStartedAtByRule.get(ruleId) ?? timestampMs;
+      state.alignmentStartedAtByRule.set(ruleId, startedAtMs);
+      if (
+        timestampMs - startedAtMs >=
+        MEASUREMENT_THRESHOLDS.temporal.minimumAlignmentPersistenceMs
+      ) {
+        state.alignmentUnstableRuleIds.add(ruleId);
       }
-    } else {
-      state.alignmentStartedAtMs = null;
     }
   }
   if (!state.candidate && metric <= entryThreshold) {
@@ -692,26 +797,39 @@ function exerciseFrame(
     state.candidateStartedAtMs = timestampMs;
     state.candidateMinMetric = metric;
     state.rangeReached = metric <= downThreshold;
-    state.alignmentStartedAtMs = issues.some((candidate) => alignmentCodes.includes(candidate.code))
-      ? timestampMs
-      : null;
-    state.alignmentUnstable = false;
+    state.alignmentStartedAtByRule.clear();
+    for (const ruleId of activeAlignmentRuleIds) {
+      state.alignmentStartedAtByRule.set(ruleId, timestampMs);
+    }
+    state.alignmentUnstableRuleIds.clear();
+    state.evaluatedAlignmentRuleIds.clear();
+    for (const ruleId of evaluatedAlignmentRuleIds) {
+      state.evaluatedAlignmentRuleIds.add(ruleId);
+    }
     phase = "eccentric";
-  } else if (state.candidate && metric <= downThreshold + 4) {
+  } else if (
+    state.candidate &&
+    metric <= downThreshold + MEASUREMENT_THRESHOLDS.exercise.bottomPhaseMarginDegrees
+  ) {
     phase = "bottom";
   } else if (state.candidate && metric >= upThreshold) {
     state.candidate = false;
     const dwellMs = timestampMs - (state.candidateStartedAtMs ?? timestampMs);
     const cooldownMs = timestampMs - state.lastRepTimestampMs;
     const rangeReached = state.rangeReached;
-    const alignmentUnstable = state.alignmentUnstable;
+    const alignmentUnstableRuleIds = [...state.alignmentUnstableRuleIds];
+    const evaluatedAlignmentRuleIdsDuringRep = [...state.evaluatedAlignmentRuleIds];
     state.candidateStartedAtMs = null;
     state.candidateMinMetric = null;
     state.rangeReached = false;
-    state.alignmentStartedAtMs = null;
-    state.alignmentUnstable = false;
+    state.alignmentStartedAtByRule.clear();
+    state.alignmentUnstableRuleIds.clear();
+    state.evaluatedAlignmentRuleIds.clear();
     state.lastTimestamp = timestampMs;
-    if (dwellMs < MIN_REP_DWELL_MS || cooldownMs < MIN_REP_COOLDOWN_MS) {
+    if (
+      dwellMs < MEASUREMENT_THRESHOLDS.temporal.minimumRepDwellMs ||
+      cooldownMs < MEASUREMENT_THRESHOLDS.temporal.minimumRepCooldownMs
+    ) {
       state.phase = "paused";
       return {
         status: "valid",
@@ -720,6 +838,7 @@ function exerciseFrame(
         metrics,
         validRep: false,
         rejectedRep: "phase_interrupted",
+        decisionRuleIds: ["rep-phase-timing"],
       };
     }
     if (!rangeReached) {
@@ -731,9 +850,10 @@ function exerciseFrame(
         metrics,
         validRep: false,
         rejectedRep: "range_not_reached",
+        decisionRuleIds: [decisionPolicy.rangeRuleId],
       };
     }
-    if (alignmentUnstable) {
+    if (alignmentUnstableRuleIds.length > 0) {
       state.phase = "paused";
       return {
         status: "valid",
@@ -742,13 +862,28 @@ function exerciseFrame(
         metrics,
         validRep: false,
         rejectedRep: "alignment_not_stable",
+        decisionRuleIds: ["rep-alignment-persistence", ...alignmentUnstableRuleIds],
       };
     }
     phase = "concentric";
     state.phase = phase;
     state.lastRepTimestampMs = timestampMs;
     state.repCount += 1;
-    return { status: "valid", phase, issues, metrics, validRep: true, rejectedRep: null };
+    return {
+      status: "valid",
+      phase,
+      issues,
+      metrics,
+      validRep: true,
+      rejectedRep: null,
+      decisionRuleIds: [
+        decisionPolicy.rangeRuleId,
+        "rep-phase-timing",
+        ...(evaluatedAlignmentRuleIdsDuringRep.length > 0
+          ? (["rep-alignment-persistence", ...evaluatedAlignmentRuleIdsDuringRep] as const)
+          : []),
+      ],
+    };
   } else if (state.candidate) {
     phase = "concentric";
   } else {
@@ -770,8 +905,39 @@ function positioningFeedback(mode: AnalysisMode, view: CameraView): FeedbackMess
     tone: "guide",
     title: "Set your view",
     body: `Use a ${side} view with your full body visible, then calibrate. This keeps advice evidence-aware.`,
+    measurementRuleIds: ["capture-view-confidence"],
     evidenceIds: evidenceIdsForIssue("positioning"),
   };
+}
+
+function decisionRuleIdsForAbstention(
+  reasons: readonly AbstentionReason[],
+): readonly MeasurementRuleId[] {
+  const ruleIds = new Set<MeasurementRuleId>();
+  for (const reason of reasons) {
+    if (
+      reason === "missing_landmarks" ||
+      reason === "low_visibility" ||
+      reason === "low_presence" ||
+      reason === "unstable_tracking"
+    ) {
+      ruleIds.add("capture-landmark-confidence");
+    } else if (
+      reason === "unsupported_view" ||
+      reason === "observed_view_mismatch" ||
+      reason === "unverified_view" ||
+      reason === "mirror_unresolved"
+    ) {
+      ruleIds.add("capture-view-confidence");
+    } else if (reason === "invalid_geometry") {
+      ruleIds.add("capture-geometry-validity");
+    } else if (reason === "stale_frame") {
+      ruleIds.add("capture-monotonic-frame-time");
+    } else if (reason === "uncalibrated") {
+      ruleIds.add("calibration-stable-window");
+    }
+  }
+  return [...ruleIds];
 }
 
 type StandingMetrics = {
@@ -789,9 +955,12 @@ function standingMetrics(observation: FrameObservation): StandingMetrics {
   const hips = midpoint(landmarks.leftHip, landmarks.rightHip);
   const ankles = midpoint(landmarks.leftAnkle, landmarks.rightAnkle);
   const ears = midpoint(landmarks.leftEar, landmarks.rightEar);
-  const torso = Math.max(0.001, Math.hypot(shoulders.x - hips.x, shoulders.y - hips.y));
+  const torso = Math.max(
+    MEASUREMENT_THRESHOLDS.geometry.minimumNormalizedScale,
+    Math.hypot(shoulders.x - hips.x, shoulders.y - hips.y),
+  );
   const bodyHeight = Math.max(
-    0.001,
+    MEASUREMENT_THRESHOLDS.geometry.minimumNormalizedScale,
     Math.max(landmarks.leftAnkle.y, landmarks.rightAnkle.y) -
       Math.min(landmarks.nose.y, landmarks.leftEar.y, landmarks.rightEar.y),
   );
@@ -833,15 +1002,15 @@ function standingIssues(
 
   if (
     (observation.cameraView === "side" || observation.cameraView === "three-quarter") &&
-    headDrift > 0.14 &&
-    Math.abs(metrics.headOffset) > 0.14
+    headDrift > MEASUREMENT_THRESHOLDS.standing.headDriftRatio &&
+    Math.abs(metrics.headOffset) > MEASUREMENT_THRESHOLDS.standing.headDriftRatio
   ) {
     issues.push(
       issue(
-        "standing_head_alignment",
+        "standing-head-drift",
         "Head alignment drift",
         headDrift,
-        0.14,
+        MEASUREMENT_THRESHOLDS.standing.headDriftRatio,
         3,
         "Gently bring your head back over your shoulders and keep your gaze level. Do not force your chin back.",
       ),
@@ -849,15 +1018,15 @@ function standingIssues(
   }
   if (
     (observation.cameraView === "side" || observation.cameraView === "three-quarter") &&
-    bodyDrift > 0.08 &&
-    metrics.bodyLean > 0.08
+    bodyDrift > MEASUREMENT_THRESHOLDS.standing.bodyDriftRatio &&
+    metrics.bodyLean > MEASUREMENT_THRESHOLDS.standing.bodyDriftRatio
   ) {
     issues.push(
       issue(
-        "standing_trunk_alignment",
+        "standing-trunk-drift",
         "Trunk alignment drift",
         bodyDrift,
-        0.08,
+        MEASUREMENT_THRESHOLDS.standing.bodyDriftRatio,
         2,
         "Let your shoulders stack more comfortably over your hips and keep your knees easy instead of bracing rigidly.",
       ),
@@ -865,14 +1034,14 @@ function standingIssues(
   }
   if (
     (observation.cameraView === "front" || observation.cameraView === "three-quarter") &&
-    lateralDrift > 0.12
+    lateralDrift > MEASUREMENT_THRESHOLDS.standing.lateralDriftRatio
   ) {
     issues.push(
       issue(
-        "standing_lateral_asymmetry",
+        "standing-lateral-drift",
         "Side-to-side difference",
         lateralDrift,
-        0.12,
+        MEASUREMENT_THRESHOLDS.standing.lateralDriftRatio,
         2,
         "Level the camera, relax both shoulders, and let your weight settle evenly before trying to correct the shape.",
       ),
@@ -905,6 +1074,8 @@ function feedbackFor(result: {
   mode: AnalysisMode;
   view: CameraView;
   confidence: EvaluationResult["confidence"];
+  decisionRuleIds: readonly MeasurementRuleId[];
+  framingRuleId?: MeasurementRuleId;
   validRep: boolean;
   rejectedRep: RejectionReason | null;
 }): FeedbackMessage {
@@ -916,6 +1087,9 @@ function feedbackFor(result: {
       tone: "guide",
       title: "Return to your calibrated distance",
       body: "Keep the same framing you used for calibration. Form advice and repetition counting are paused until your body is back in range.",
+      issueCode: "positioning",
+      measurementRuleIds: result.framingRuleId ? [result.framingRuleId] : undefined,
+      evidenceIds: evidenceIdsForIssue("positioning"),
     };
   }
   if (result.confidence.reasons.includes("uncalibrated")) {
@@ -925,6 +1099,8 @@ function feedbackFor(result: {
       tone: "guide",
       title: "Calibrate first",
       body: "Hold a relaxed position while the view-specific baseline settles. Form advice stays paused until then.",
+      measurementRuleIds:
+        result.decisionRuleIds.length > 0 ? result.decisionRuleIds : ["calibration-stable-window"],
     };
   }
   if (
@@ -938,6 +1114,7 @@ function feedbackFor(result: {
       tone: "caution",
       title: "Move into view",
       body: "I’m pausing form advice until the required landmarks are clear. Step back, improve lighting, or adjust the camera.",
+      measurementRuleIds: result.decisionRuleIds,
     };
   }
   if (result.rejectedRep === "phase_interrupted") {
@@ -947,6 +1124,7 @@ function feedbackFor(result: {
       tone: "guide",
       title: "Rep not counted",
       body: "Stay in the movement phase a little longer and keep the next repetition controlled.",
+      measurementRuleIds: result.decisionRuleIds,
       evidenceIds: ["controlled-exercise"],
     };
   }
@@ -957,6 +1135,7 @@ function feedbackFor(result: {
       tone: "guide",
       title: "Rep not counted",
       body: "Move through the selected range with control before returning to the start position.",
+      measurementRuleIds: result.decisionRuleIds,
       evidenceIds: ["comfortable-range"],
     };
   }
@@ -967,6 +1146,7 @@ function feedbackFor(result: {
       tone: "guide",
       title: "Rep not counted",
       body: "Keep the relevant joints aligned through the full repetition before returning to the start position.",
+      measurementRuleIds: result.decisionRuleIds,
       evidenceIds: ["controlled-exercise"],
     };
   }
@@ -984,6 +1164,7 @@ function feedbackFor(result: {
       title: first.label,
       body: `${first.correction} ${CAUTIOUS}`,
       issueCode: first.code,
+      measurementRuleIds: [first.measurementRuleId],
       evidenceIds: evidenceIdsForIssue(first.code),
     };
   }
@@ -994,6 +1175,7 @@ function feedbackFor(result: {
       tone: "positive",
       title: "Rep logged",
       body: "Movement crossed this mode's local thresholds. Keep a comfortable, controlled rhythm; this count is not a safety or health clearance.",
+      measurementRuleIds: result.decisionRuleIds,
       evidenceIds: evidenceIdsForMode(result.mode),
     };
   if (result.mode === "standing")
@@ -1003,6 +1185,7 @@ function feedbackFor(result: {
       tone: "positive",
       title: "Standing alignment looks steady",
       body: "No supported persistent deviation is detected in this view. Visible landmarks remain close to your relaxed baseline; this is not a health assessment or medical clearance.",
+      measurementRuleIds: result.decisionRuleIds,
       evidenceIds: evidenceIdsForMode(result.mode),
     };
   return {
@@ -1011,6 +1194,7 @@ function feedbackFor(result: {
     tone: "positive",
     title: "Looking steady",
     body: "No supported persistent issue is detected in this view. Keep breathing normally; this local result is not a safety or health clearance.",
+    measurementRuleIds: result.decisionRuleIds,
     evidenceIds: evidenceIdsForMode(result.mode),
   };
 }
@@ -1018,8 +1202,10 @@ function feedbackFor(result: {
 export class PostureEngine {
   // Favor current-frame response while retaining enough filtering to keep
   // low-light/mobile landmark jitter from becoming false coaching cues.
-  private readonly smoother = new LandmarkSmoother(0.58);
-  private readonly gates = new Map<IssueCode, PersistenceGate>();
+  private readonly smoother = new LandmarkSmoother(
+    MEASUREMENT_THRESHOLDS.temporal.evaluatorSmootherAlphaAtReferenceFrame,
+  );
+  private readonly gates = new Map<MeasurementRuleId, PersistenceGate>();
   private readonly exercises = new Map<ExerciseMode, ExerciseState>();
   private mode: AnalysisMode = "desk";
   private calibrationStable = false;
@@ -1062,7 +1248,12 @@ export class PostureEngine {
 
   process(observation: FrameObservation): EvaluationResult {
     const timestampMs = observation.timestampMs;
-    if (!Number.isFinite(timestampMs) || timestampMs <= this.lastObservationTimestamp) {
+    const timestampStepMs = timestampMs - this.lastObservationTimestamp;
+    if (
+      !Number.isFinite(timestampMs) ||
+      (this.lastObservationTimestamp >= 0 &&
+        timestampStepMs < MEASUREMENT_THRESHOLDS.temporal.minimumSubmittedTimestampStepMs)
+    ) {
       this.interruptActiveExercise();
       const confidence = assessConfidence(observation, this.mode);
       const staleResult = {
@@ -1078,6 +1269,7 @@ export class PostureEngine {
         },
         phase: "paused" as const,
         issues: [],
+        decisionRuleIds: ["capture-monotonic-frame-time"] as const,
         validRep: false,
         rejectedRep: "insufficient_evidence" as const,
         repCount: this.currentRepCount(),
@@ -1111,9 +1303,13 @@ export class PostureEngine {
     const geometryAvailable = geometryIsAvailable(this.mode, smoothed);
     const framingIssue =
       calibrationMatches && calibrationProfile && geometryAvailable
-        ? this.mode === "standing"
-          ? standingFramingIssue(smoothed, calibrationProfile.baseline)
-          : calibrationFramingIssue(smoothed, calibrationProfile.baseline)
+        ? this.mode === "desk"
+          ? calibrationFramingIssue(smoothed, calibrationProfile.baseline, this.mode)
+          : wholeBodyFramingIssue(
+              smoothed,
+              calibrationProfile.baseline,
+              this.mode as Exclude<AnalysisMode, "desk">,
+            )
         : null;
     if (
       !calibrationMatches ||
@@ -1147,12 +1343,22 @@ export class PostureEngine {
         confidence: gatedConfidence,
         phase: "paused" as MovementPhase,
         issues: [],
+        decisionRuleIds: framingIssue
+          ? [framingIssue.measurementRuleId]
+          : decisionRuleIdsForAbstention(gatedConfidence.reasons),
         validRep: false,
         rejectedRep: null,
         repCount: this.currentRepCount(),
         metrics: {},
       };
-      return { ...result, feedback: feedbackFor({ ...result, view: smoothed.cameraView }) };
+      return {
+        ...result,
+        feedback: feedbackFor({
+          ...result,
+          view: smoothed.cameraView,
+          framingRuleId: framingIssue?.measurementRuleId,
+        }),
+      };
     }
 
     const raw =
@@ -1179,6 +1385,7 @@ export class PostureEngine {
         },
         phase: "paused" as const,
         issues: [],
+        decisionRuleIds: ["capture-geometry-validity"] as const,
         validRep: false,
         rejectedRep: "insufficient_evidence" as const,
         repCount: this.currentRepCount(),
@@ -1198,6 +1405,8 @@ export class PostureEngine {
       confidence,
       phase: raw.phase,
       issues,
+      decisionRuleIds:
+        raw.decisionRuleIds ?? evaluatedDecisionRuleIds(this.mode, smoothed.cameraView),
       validRep: raw.validRep,
       rejectedRep: raw.rejectedRep,
       repCount: this.currentRepCount(),
@@ -1207,31 +1416,20 @@ export class PostureEngine {
   }
 
   private persist(rawIssues: RawIssue[], timestampMs: number): EvaluationIssue[] {
-    const present = new Set(rawIssues.map((candidate) => candidate.code));
-    for (const [code, gate] of this.gates) {
-      if (!present.has(code)) gate.update(false, timestampMs);
+    const present = new Set(rawIssues.map((candidate) => candidate.measurementRuleId));
+    for (const [measurementRuleId, gate] of this.gates) {
+      if (!present.has(measurementRuleId)) gate.update(false, timestampMs);
     }
     return rawIssues.flatMap((candidate) => {
+      const persistenceMs = MEASUREMENT_RULE_BY_ID[candidate.measurementRuleId].persistenceMs;
       const gate =
-        this.gates.get(candidate.code) ??
-        new PersistenceGate(
-          candidate.code === "prolonged_slouch"
-            ? 15_000
-            : candidate.code.startsWith("standing_")
-              ? 650
-              : 900,
-        );
-      this.gates.set(candidate.code, gate);
+        this.gates.get(candidate.measurementRuleId) ?? new PersistenceGate(persistenceMs);
+      this.gates.set(candidate.measurementRuleId, gate);
       return gate.update(true, timestampMs)
         ? [
             {
               ...candidate,
-              persistenceMs:
-                candidate.code === "prolonged_slouch"
-                  ? 15_000
-                  : candidate.code.startsWith("standing_")
-                    ? 650
-                    : 900,
+              persistenceMs,
             },
           ]
         : [];
@@ -1265,8 +1463,9 @@ export class PostureEngine {
       state.candidateStartedAtMs = null;
       state.candidateMinMetric = null;
       state.rangeReached = false;
-      state.alignmentStartedAtMs = null;
-      state.alignmentUnstable = false;
+      state.alignmentStartedAtByRule.clear();
+      state.alignmentUnstableRuleIds.clear();
+      state.evaluatedAlignmentRuleIds.clear();
       state.lastRepTimestampMs = -Infinity;
       state.lastTimestamp = -1;
     }
@@ -1277,6 +1476,9 @@ export class PostureEngine {
     const state = this.exerciseState(this.mode);
     state.candidate = false;
     state.candidateStartedAtMs = null;
+    state.alignmentStartedAtByRule.clear();
+    state.alignmentUnstableRuleIds.clear();
+    state.evaluatedAlignmentRuleIds.clear();
     state.phase = "paused";
   }
 }

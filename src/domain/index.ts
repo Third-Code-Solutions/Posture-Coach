@@ -1,4 +1,5 @@
 export * from "./contracts";
+export * from "./measurement-registry";
 export * from "./geometry";
 export * from "./confidence";
 export * from "./calibration";

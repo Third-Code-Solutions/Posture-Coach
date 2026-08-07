@@ -6,6 +6,7 @@ import {
   CalibrationWindow,
   type CameraView,
   LandmarkSmoother,
+  MEASUREMENT_THRESHOLDS,
   SessionTracker,
   angleAt,
   createEmptyLandmarkSet,
@@ -38,6 +39,17 @@ function setStableCalibration(
   });
 }
 
+function makeFrontSplitWorldLandmarks() {
+  return makeLandmarks({
+    leftShoulder: { x: -0.2, y: 0, z: 0 },
+    rightShoulder: { x: 0.2, y: 0, z: 0 },
+    leftHip: { x: -0.15, y: 0.5, z: 0 },
+    rightHip: { x: 0.15, y: 0.5, z: 0 },
+    leftAnkle: { x: -0.1, y: 1, z: -0.5 },
+    rightAnkle: { x: 0.1, y: 1, z: 0.5 },
+  });
+}
+
 describe("domain contracts and evidence gates", () => {
   it("creates a complete 33-landmark set without undefined entries", () => {
     const set = createEmptyLandmarkSet();
@@ -52,6 +64,39 @@ describe("domain contracts and evidence gates", () => {
     expect(assessment.state).toBe("insufficient");
     expect(assessment.missing).toContain("leftShoulder");
     expect(assessment.reasons).toContain("low_visibility");
+  });
+
+  it("keeps a pose above the registered pose gate usable when landmarks are clear", () => {
+    const assessment = assessConfidence(makeObservation({ poseConfidence: 0.55 }), "desk");
+    expect(assessment.state).toBe("usable");
+    expect(assessment.reasons).not.toContain("unstable_tracking");
+  });
+
+  it("accepts the visible body chain when the far side is occluded in a side view", () => {
+    const landmarks = makeLandmarks({
+      rightShoulder: { visibility: 0.15, presence: 0.15 },
+      rightElbow: { visibility: 0.15, presence: 0.15 },
+      rightWrist: { visibility: 0.15, presence: 0.15 },
+      rightHip: { x: 0.95, visibility: 0.15, presence: 0.15 },
+      rightAnkle: { visibility: 0.15, presence: 0.15 },
+      rightHeel: { visibility: 0.15, presence: 0.15 },
+      rightFootIndex: { visibility: 0.15, presence: 0.15 },
+    });
+    for (const mode of ["plank", "pushup"] as const) {
+      const assessment = assessConfidence(makeObservation({ landmarks }), mode);
+      expect(assessment.state).not.toBe("insufficient");
+      expect(assessment.required).toContain("leftShoulder");
+      expect(assessment.required).not.toContain("rightShoulder");
+    }
+    const engine = createEngine();
+    setStableCalibration(engine, "plank", "side");
+    engine.process(makeObservation({ landmarks, timestampMs: 0 }));
+    const persisted = engine.process(makeObservation({ landmarks, timestampMs: 1_000 }));
+    expect(persisted.status).toBe("valid");
+    expect(persisted.phase).toBe("hold");
+    expect(persisted.issues).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ measurementRuleId: "plank-body-line" })]),
+    );
   });
 
   it("abstains when the observed camera view is unverified", () => {
@@ -95,6 +140,60 @@ describe("temporal smoothing and calibration", () => {
     expect(result.baseline.torso).toBeGreaterThan(0);
     window.reset();
     expect(window.add(makeObservation()).sampleCount).toBe(1);
+  });
+
+  it("ignores delayed frames submitted before calibration started", () => {
+    const window = new CalibrationWindow("desk", "side", false, 4, 100);
+
+    expect(window.acceptsTimestamp(90)).toBe(false);
+    expect(window.acceptsTimestamp(100)).toBe(true);
+    expect(window.add(makeObservation({ timestampMs: 90 })).sampleCount).toBe(0);
+    expect(window.add(makeObservation({ timestampMs: 100, sequence: 1 })).sampleCount).toBe(1);
+    expect(window.add(makeObservation({ timestampMs: 95, sequence: 2 })).sampleCount).toBe(1);
+    expect(window.add(makeObservation({ timestampMs: 140, sequence: 3 })).sampleCount).toBe(2);
+  });
+
+  it("calibrates and evaluates a side plank from the visible body chain only", () => {
+    const window = new CalibrationWindow("plank", "side", false, 4);
+    const landmarks = makeLandmarks({
+      rightShoulder: { visibility: 0.15, presence: 0.15 },
+      rightHip: { x: 0.95, visibility: 0.15, presence: 0.15 },
+      rightAnkle: { visibility: 0.15, presence: 0.15 },
+      rightHeel: { visibility: 0.15, presence: 0.15 },
+      rightFootIndex: { visibility: 0.15, presence: 0.15 },
+    });
+    let profile = window.add(makeObservation({ landmarks, timestampMs: 0 }));
+    for (let index = 1; index < 4; index += 1) {
+      profile = window.add(
+        makeObservation({ landmarks, timestampMs: index * 40, sequence: index }),
+      );
+    }
+    expect(profile.stable).toBe(true);
+    expect(profile.baseline.movementMetric).toBeGreaterThan(150);
+    expect(profile.baseline.torso).toBeCloseTo(
+      Math.hypot(
+        landmarks.leftShoulder.x - landmarks.leftHip.x,
+        landmarks.leftShoulder.y - landmarks.leftHip.y,
+      ),
+      6,
+    );
+
+    const engine = createEngine();
+    engine.setMode("plank");
+    engine.setCalibrationProfile(profile);
+    const malformedFarSide = makeLandmarks({
+      rightShoulder: { x: -4, y: 6, visibility: 0.15, presence: 0.15 },
+      rightHip: { x: 5, y: -3, visibility: 0.15, presence: 0.15 },
+      rightAnkle: { x: 4, y: 4, visibility: 0.15, presence: 0.15 },
+      rightHeel: { x: -2, y: 3, visibility: 0.15, presence: 0.15 },
+      rightFootIndex: { x: 3, y: -2, visibility: 0.15, presence: 0.15 },
+    });
+    engine.process(makeObservation({ landmarks: malformedFarSide, timestampMs: 200, sequence: 5 }));
+    const result = engine.process(
+      makeObservation({ landmarks: malformedFarSide, timestampMs: 1_000, sequence: 6 }),
+    );
+    expect(result.status).toBe("valid");
+    expect(result.confidence.reasons).not.toContain("framing_drift");
   });
 
   it("rejects a desk baseline while head and shoulders are moving", () => {
@@ -191,6 +290,7 @@ describe("geometry and deterministic coaching", () => {
     expect(result.status).toBe("insufficient_evidence");
     expect(result.feedback.title).toBe("Move into view");
     expect(result.confidence.missing).toContain("leftShoulder");
+    expect(result.feedback.measurementRuleIds).toContain("capture-landmark-confidence");
   });
 
   it("does not emit authoritative advice before calibration", () => {
@@ -200,6 +300,7 @@ describe("geometry and deterministic coaching", () => {
     expect(result.status).toBe("insufficient_evidence");
     expect(result.feedback.title).toBe("Calibrate first");
     expect(result.confidence.reasons).toContain("uncalibrated");
+    expect(result.feedback.measurementRuleIds).toContain("calibration-stable-window");
   });
 
   it("requires a stable matching profile on a fresh engine", () => {
@@ -217,6 +318,46 @@ describe("geometry and deterministic coaching", () => {
     expect(result.status).toBe("insufficient_evidence");
     expect(result.confidence.reasons).toContain("stale_frame");
     expect(result.feedback.title).toBe("Move into view");
+    expect(result.feedback.measurementRuleIds).toEqual(["capture-monotonic-frame-time"]);
+  });
+
+  it("enforces the registered minimum frame timestamp step", () => {
+    const engine = createEngine();
+    setStableCalibration(engine, "desk");
+    engine.process(makeObservation({ timestampMs: 1_000 }));
+    const result = engine.process(makeObservation({ timestampMs: 1_000.05, sequence: 1 }));
+    expect(result.status).toBe("insufficient_evidence");
+    expect(result.feedback.measurementRuleIds).toEqual(["capture-monotonic-frame-time"]);
+  });
+
+  it("pauses exercise coaching when the full body touches a frame edge", () => {
+    const engine = createEngine();
+    setStableCalibration(engine, "squat", "front");
+    const cropped = makeLandmarks({ nose: { y: 0 } });
+    const result = engine.process(
+      makeObservation({
+        landmarks: cropped,
+        cameraView: "front",
+        observedView: "front",
+      }),
+    );
+    expect(result.status).toBe("insufficient_evidence");
+    expect(result.feedback.measurementRuleIds).toEqual(["framing-whole-body"]);
+  });
+
+  it("pauses exercise coaching when heels or toes are cropped", () => {
+    const engine = createEngine();
+    setStableCalibration(engine, "squat", "front");
+    const cropped = makeLandmarks({ rightFootIndex: { y: 1 } });
+    const result = engine.process(
+      makeObservation({
+        landmarks: cropped,
+        cameraView: "front",
+        observedView: "front",
+      }),
+    );
+    expect(result.status).toBe("insufficient_evidence");
+    expect(result.feedback.measurementRuleIds).toEqual(["framing-whole-body"]);
   });
 
   it("abstains when a plank angle is geometrically unavailable", () => {
@@ -233,6 +374,7 @@ describe("geometry and deterministic coaching", () => {
     const result = engine.process(makeObservation({ landmarks: degenerate }));
     expect(result.status).toBe("insufficient_evidence");
     expect(result.feedback.title).toBe("Move into view");
+    expect(result.feedback.measurementRuleIds).toContain("capture-geometry-validity");
   });
 
   it("abstains when desk torso geometry collapses", () => {
@@ -272,6 +414,12 @@ describe("geometry and deterministic coaching", () => {
     expect(result.status).toBe("valid");
     expect(result.issues).toHaveLength(0);
     expect(result.feedback.tone).toBe("positive");
+    expect(result.feedback.measurementRuleIds).toEqual([
+      "desk-head-forward",
+      "desk-neck-inclination",
+      "desk-torso-inclination",
+      "desk-prolonged-slouch",
+    ]);
   });
 
   it("calibrates a relaxed full-body standing baseline and recognizes steady alignment", () => {
@@ -303,6 +451,10 @@ describe("geometry and deterministic coaching", () => {
     expect(result.issues).toHaveLength(0);
     expect(result.feedback.title).toBe("Standing alignment looks steady");
     expect(result.feedback.body).toContain("not a health assessment or medical clearance");
+    expect(result.feedback.measurementRuleIds).toEqual([
+      "standing-head-drift",
+      "standing-trunk-drift",
+    ]);
   });
 
   it("teaches a persistent side-view head and trunk alignment drift", () => {
@@ -421,6 +573,7 @@ describe("geometry and deterministic coaching", () => {
     expect(result.issues).toHaveLength(0);
     expect(result.confidence.reasons).toContain("framing_drift");
     expect(result.feedback.title).toBe("Return to your calibrated distance");
+    expect(result.feedback.measurementRuleIds).toEqual(["framing-torso-distance"]);
   });
 
   it("abstains when a mode is used from an unsupported view", () => {
@@ -475,6 +628,10 @@ describe("geometry and deterministic coaching", () => {
     expect(
       results.find((result) => result.rejectedRep === "phase_interrupted")?.feedback.title,
     ).toBe("Rep not counted");
+    expect(
+      results.find((result) => result.rejectedRep === "phase_interrupted")?.feedback
+        .measurementRuleIds,
+    ).toEqual(["rep-phase-timing"]);
     expect(results.at(-1)?.repCount).toBe(0);
   });
 
@@ -492,6 +649,7 @@ describe("geometry and deterministic coaching", () => {
     expect(result.validRep).toBe(false);
     expect(result.rejectedRep).toBe("range_not_reached");
     expect(result.repCount).toBe(0);
+    expect(result.feedback.measurementRuleIds).toEqual(["squat-range"]);
   });
 
   it("rejects a repetition with persistent alignment drift", () => {
@@ -524,6 +682,10 @@ describe("geometry and deterministic coaching", () => {
     expect(result.validRep).toBe(false);
     expect(result.rejectedRep).toBe("alignment_not_stable");
     expect(result.repCount).toBe(0);
+    expect(result.feedback.measurementRuleIds).toEqual([
+      "rep-alignment-persistence",
+      "squat-knee-tracking",
+    ]);
   });
 
   it("keeps all five exercise evaluators confidence-gated and deterministic", () => {
@@ -585,20 +747,27 @@ describe("geometry and deterministic coaching", () => {
     expect(pushup.validRep).toBe(true);
     expect(pushup.repCount).toBe(1);
     expect(pushup.feedback.body).toContain("not a safety or health clearance");
+    expect(pushup.feedback.measurementRuleIds).toEqual([
+      "pushup-range",
+      "rep-phase-timing",
+      "rep-alignment-persistence",
+      "pushup-body-line",
+    ]);
   });
 
-  it("counts a valid lunge only when one leg leads in a split stance", () => {
+  it("counts a valid lunge with balanced knee flexion in a split stance", () => {
     const engine = createEngine();
     setStableCalibration(engine, "lunge", "front");
     const splitStance = makeLandmarks({
-      leftKnee: { x: 0.6, y: 0.9 },
-      leftAnkle: { x: 0.75, y: 0.86 },
+      leftKnee: { x: 0.45, y: 0.8 },
+      leftAnkle: { x: 0.3, y: 0.8 },
       rightKnee: { x: 0.55, y: 0.8 },
-      rightAnkle: { x: 0.45, y: 0.96 },
+      rightAnkle: { x: 0.7, y: 0.8 },
     });
     engine.process(
       makeObservation({
         landmarks: splitStance,
+        worldLandmarks: makeFrontSplitWorldLandmarks(),
         cameraView: "front",
         observedView: "front",
         timestampMs: 0,
@@ -607,6 +776,7 @@ describe("geometry and deterministic coaching", () => {
     engine.process(
       makeObservation({
         landmarks: splitStance,
+        worldLandmarks: makeFrontSplitWorldLandmarks(),
         cameraView: "front",
         observedView: "front",
         timestampMs: 500,
@@ -615,6 +785,7 @@ describe("geometry and deterministic coaching", () => {
     );
     const counted = engine.process(
       makeObservation({
+        worldLandmarks: makeFrontSplitWorldLandmarks(),
         cameraView: "front",
         observedView: "front",
         timestampMs: 1_200,
@@ -623,6 +794,13 @@ describe("geometry and deterministic coaching", () => {
     );
     expect(counted.validRep).toBe(true);
     expect(counted.repCount).toBe(1);
+    expect(counted.feedback.measurementRuleIds).toEqual([
+      "lunge-range",
+      "rep-phase-timing",
+      "rep-alignment-persistence",
+      "lunge-split-stance",
+      "lunge-knee-tracking",
+    ]);
 
     const squatLike = createEngine();
     setStableCalibration(squatLike, "lunge", "front");
@@ -661,6 +839,159 @@ describe("geometry and deterministic coaching", () => {
     expect(rejected.rejectedRep).toBe("alignment_not_stable");
   });
 
+  it("retains front-view lunge depth through a torso-normalized world-space stance", () => {
+    const engine = createEngine();
+    setStableCalibration(engine, "lunge", "front");
+    const projectedOverlap = makeLandmarks({
+      leftAnkle: { x: 0.5, y: 0.9 },
+      rightAnkle: { x: 0.5, y: 0.9 },
+    });
+    const worldLandmarks = makeLandmarks({
+      leftShoulder: { x: -0.2, y: 0, z: 0 },
+      rightShoulder: { x: 0.2, y: 0, z: 0 },
+      leftHip: { x: -0.15, y: 0.5, z: 0 },
+      rightHip: { x: 0.15, y: 0.5, z: 0 },
+      leftAnkle: { x: 0, y: 1, z: -0.5 },
+      rightAnkle: { x: 0, y: 1, z: 0.5 },
+    });
+    const result = engine.process(
+      makeObservation({
+        landmarks: projectedOverlap,
+        cameraView: "front",
+        observedView: "front",
+        worldLandmarks,
+        timestampMs: 1,
+      }),
+    );
+    expect(result.metrics.stanceSeparation).toBeCloseTo(2);
+  });
+
+  it("rejects a lateral wide squat as a lunge when fore-aft depth is absent", () => {
+    const engine = createEngine();
+    setStableCalibration(engine, "lunge", "front");
+    const wideSquat = makeLandmarks({
+      leftAnkle: { x: 0.2, y: 0.9 },
+      rightAnkle: { x: 0.8, y: 0.9 },
+    });
+    const worldWideSquat = makeLandmarks({
+      leftShoulder: { x: -0.2, y: 0, z: 0 },
+      rightShoulder: { x: 0.2, y: 0, z: 0 },
+      leftHip: { x: -0.15, y: 0.5, z: 0 },
+      rightHip: { x: 0.15, y: 0.5, z: 0 },
+      leftAnkle: { x: -0.8, y: 1, z: 0 },
+      rightAnkle: { x: 0.8, y: 1, z: 0 },
+    });
+    engine.process(
+      makeObservation({
+        landmarks: wideSquat,
+        worldLandmarks: worldWideSquat,
+        cameraView: "front",
+        observedView: "front",
+        timestampMs: 0,
+      }),
+    );
+    const result = engine.process(
+      makeObservation({
+        landmarks: wideSquat,
+        worldLandmarks: worldWideSquat,
+        cameraView: "front",
+        observedView: "front",
+        timestampMs: 1_000,
+        sequence: 1,
+      }),
+    );
+    expect(result.metrics.stanceSeparation).toBeCloseTo(0);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ measurementRuleId: "lunge-split-stance" }),
+      ]),
+    );
+  });
+
+  it("links a lunge cue only to the rule that triggered it", () => {
+    const engine = createEngine();
+    setStableCalibration(engine, "lunge", "front");
+    const symmetric = makeLandmarks({
+      leftKnee: { x: 0.45, y: 0.65 },
+      rightKnee: { x: 0.55, y: 0.65 },
+      leftAnkle: { x: 0.6, y: 0.65 },
+      rightAnkle: { x: 0.7, y: 0.65 },
+    });
+    const first = engine.process(
+      makeObservation({
+        landmarks: symmetric,
+        cameraView: "front",
+        observedView: "front",
+        timestampMs: 0,
+      }),
+    );
+    const persisted = engine.process(
+      makeObservation({
+        landmarks: symmetric,
+        cameraView: "front",
+        observedView: "front",
+        timestampMs: 1_000,
+        sequence: 1,
+      }),
+    );
+
+    expect(first.issues).toHaveLength(0);
+    expect(persisted.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "lunge_alignment",
+          measurementRuleId: "lunge-split-stance",
+        }),
+      ]),
+    );
+    expect(persisted.feedback.measurementRuleIds).toEqual(["lunge-split-stance"]);
+  });
+
+  it("reports bilateral lunge knee tracking without inventing a lead side", () => {
+    const engine = createEngine();
+    setStableCalibration(engine, "lunge", "front");
+    const bilateralTrackingFixture = makeLandmarks({
+      leftKnee: { x: 0.45, y: 0.8 },
+      leftAnkle: { x: 0.6, y: 0.8 },
+      rightKnee: { x: 0.55, y: 0.8 },
+      rightAnkle: { x: 0.9, y: 0.96 },
+    });
+
+    engine.process(
+      makeObservation({
+        landmarks: bilateralTrackingFixture,
+        worldLandmarks: makeFrontSplitWorldLandmarks(),
+        cameraView: "front",
+        observedView: "front",
+        timestampMs: 0,
+      }),
+    );
+    const persisted = engine.process(
+      makeObservation({
+        landmarks: bilateralTrackingFixture,
+        worldLandmarks: makeFrontSplitWorldLandmarks(),
+        cameraView: "front",
+        observedView: "front",
+        timestampMs: 1_000,
+        sequence: 1,
+      }),
+    );
+
+    expect(persisted.metrics.kneeAlignmentDeviation).toBeGreaterThan(
+      MEASUREMENT_THRESHOLDS.exercise.kneeAlignmentDeviation,
+    );
+    expect(persisted.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          measurementRuleId: "lunge-knee-tracking",
+          label: "Knee tracking",
+        }),
+      ]),
+    );
+    expect(persisted.feedback.title).toBe("Knee tracking");
+    expect(JSON.stringify(persisted.feedback)).not.toMatch(/front/i);
+  });
+
   it("counts a curl through full flexion while rejecting elbow flare", () => {
     const engine = createEngine();
     setStableCalibration(engine, "curl");
@@ -675,6 +1006,7 @@ describe("geometry and deterministic coaching", () => {
     const counted = engine.process(makeObservation({ timestampMs: 1_200, sequence: 2 }));
     expect(counted.validRep).toBe(true);
     expect(counted.repCount).toBe(1);
+    expect(counted.feedback.measurementRuleIds).toEqual(["curl-range", "rep-phase-timing"]);
 
     const driftEngine = createEngine();
     setStableCalibration(driftEngine, "curl", "front");
@@ -848,6 +1180,7 @@ describe("session summaries", () => {
       },
       phase: "paused",
       issues: [],
+      decisionRuleIds: ["capture-landmark-confidence"],
       feedback: { id: "paused", priority: 1, tone: "caution", title: "Paused", body: "Paused" },
       validRep: false,
       rejectedRep: "insufficient_evidence",
@@ -867,6 +1200,7 @@ describe("session summaries", () => {
       },
       phase: "concentric",
       issues: [],
+      decisionRuleIds: ["squat-range", "rep-phase-timing"],
       feedback: { id: "rep", priority: 1, tone: "positive", title: "Rep", body: "Rep" },
       validRep: true,
       rejectedRep: null,

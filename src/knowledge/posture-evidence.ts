@@ -1,4 +1,9 @@
-import type { AnalysisMode, IssueCode } from "../domain/contracts";
+import { ISSUE_CODES, type AnalysisMode, type IssueCode } from "../domain/contracts";
+import {
+  measurementRulesForIssue,
+  type MeasurementProvenance,
+  type MeasurementRuleId,
+} from "../domain/measurement-registry";
 
 export const POSTURE_EVIDENCE_CACHE_VERSION = "2026-08-07";
 
@@ -780,12 +785,11 @@ export const POSTURE_EVIDENCE = [
     title: "Lunge mode: stance and controlled loading",
     category: "exercise",
     evidenceLevel: "biomechanics",
-    signal:
-      "The front and rear legs do not separate clearly or the front knee loses a stable path.",
+    signal: "The legs do not separate clearly or either visible knee loses a stable path.",
     claim:
       "Biomechanical studies show that lunge variations distribute motion and loading differently across the hip, knee, and ankle. A stable split stance and controlled range are reasonable technique cues, not universal clinical rules.",
     actions: [
-      "Set a split stance you can balance, then lower slowly with the front leg doing the intended work.",
+      "Set a split stance you can balance, then lower slowly while each visible knee tracks with its foot.",
       "Shorten the stance or range if balance or control is lost; stop if you feel pain.",
     ],
     limitations:
@@ -868,99 +872,38 @@ export const MODE_GUIDE_EVIDENCE_IDS: Record<AnalysisMode, readonly PostureEvide
   curl: ["curl-mode-guide"],
 };
 
-export type ThresholdProvenance = "product-heuristic" | "operational-only";
+export type ThresholdProvenance = MeasurementProvenance;
 
 export interface IssueMeasurementStatus {
   validationStatus: "unvalidated";
   thresholdProvenance: ThresholdProvenance;
   note: string;
+  ruleIds: readonly MeasurementRuleId[];
 }
 
 const HEURISTIC_MEASUREMENT_NOTE =
   "This trigger is a product heuristic for repeatable coaching, not a validated clinical cutoff or safety test.";
 
-export const ISSUE_MEASUREMENT_STATUS: Record<IssueCode, IssueMeasurementStatus> = {
-  standing_head_alignment: {
-    validationStatus: "unvalidated",
-    thresholdProvenance: "product-heuristic",
-    note: HEURISTIC_MEASUREMENT_NOTE,
-  },
-  standing_trunk_alignment: {
-    validationStatus: "unvalidated",
-    thresholdProvenance: "product-heuristic",
-    note: HEURISTIC_MEASUREMENT_NOTE,
-  },
-  standing_lateral_asymmetry: {
-    validationStatus: "unvalidated",
-    thresholdProvenance: "product-heuristic",
-    note: HEURISTIC_MEASUREMENT_NOTE,
-  },
-  head_forward: {
-    validationStatus: "unvalidated",
-    thresholdProvenance: "product-heuristic",
-    note: HEURISTIC_MEASUREMENT_NOTE,
-  },
-  neck_inclination: {
-    validationStatus: "unvalidated",
-    thresholdProvenance: "product-heuristic",
-    note: HEURISTIC_MEASUREMENT_NOTE,
-  },
-  shoulder_imbalance: {
-    validationStatus: "unvalidated",
-    thresholdProvenance: "product-heuristic",
-    note: HEURISTIC_MEASUREMENT_NOTE,
-  },
-  torso_inclination: {
-    validationStatus: "unvalidated",
-    thresholdProvenance: "product-heuristic",
-    note: HEURISTIC_MEASUREMENT_NOTE,
-  },
-  prolonged_slouch: {
-    validationStatus: "unvalidated",
-    thresholdProvenance: "product-heuristic",
-    note: HEURISTIC_MEASUREMENT_NOTE,
-  },
-  squat_depth: {
-    validationStatus: "unvalidated",
-    thresholdProvenance: "product-heuristic",
-    note: HEURISTIC_MEASUREMENT_NOTE,
-  },
-  squat_knee_alignment: {
-    validationStatus: "unvalidated",
-    thresholdProvenance: "product-heuristic",
-    note: HEURISTIC_MEASUREMENT_NOTE,
-  },
-  plank_alignment: {
-    validationStatus: "unvalidated",
-    thresholdProvenance: "product-heuristic",
-    note: HEURISTIC_MEASUREMENT_NOTE,
-  },
-  pushup_body_line: {
-    validationStatus: "unvalidated",
-    thresholdProvenance: "product-heuristic",
-    note: HEURISTIC_MEASUREMENT_NOTE,
-  },
-  pushup_depth: {
-    validationStatus: "unvalidated",
-    thresholdProvenance: "product-heuristic",
-    note: HEURISTIC_MEASUREMENT_NOTE,
-  },
-  lunge_alignment: {
-    validationStatus: "unvalidated",
-    thresholdProvenance: "product-heuristic",
-    note: HEURISTIC_MEASUREMENT_NOTE,
-  },
-  curl_control: {
-    validationStatus: "unvalidated",
-    thresholdProvenance: "product-heuristic",
-    note: HEURISTIC_MEASUREMENT_NOTE,
-  },
-  positioning: {
-    validationStatus: "unvalidated",
-    thresholdProvenance: "operational-only",
-    note: "This is a framing and visibility check, not a posture finding or health assessment.",
-  },
-};
+export const ISSUE_MEASUREMENT_STATUS = Object.fromEntries(
+  ISSUE_CODES.map((issueCode) => {
+    const rules = measurementRulesForIssue(issueCode);
+    const thresholdProvenance = rules.every((rule) => rule.provenance === "operational-only")
+      ? "operational-only"
+      : "product-heuristic";
+    return [
+      issueCode,
+      {
+        validationStatus: "unvalidated",
+        thresholdProvenance,
+        note:
+          thresholdProvenance === "operational-only"
+            ? "This is a framing and visibility check, not a posture finding or health assessment."
+            : HEURISTIC_MEASUREMENT_NOTE,
+        ruleIds: rules.map((rule) => rule.id),
+      },
+    ];
+  }),
+) as unknown as Record<IssueCode, IssueMeasurementStatus>;
 
 export function evidenceIdsForIssue(issueCode: IssueCode): readonly PostureEvidenceId[] {
   return ISSUE_EVIDENCE_IDS[issueCode];

@@ -118,6 +118,13 @@ test("analyzes a fake webcam stream locally", async ({ page, browserName }, test
     });
     await expect(page.getByText(/Screen wake lock active/i)).toBeVisible();
     if (testInfo.project.name === "chromium") {
+      // The deterministic camera fixture is a one-leg balance pose. Use desk
+      // mode here so this lifecycle test does not bypass standing's full-feet
+      // evidence gate merely to prove calibration wiring.
+      await page
+        .getByRole("listbox", { name: "Practice mode" })
+        .getByRole("option", { name: "Desk posture" })
+        .click();
       await page.getByRole("button", { name: /Calibrate now/ }).click();
       await expect(page.getByText("Calibration ready")).toBeVisible({ timeout: 15_000 });
       await expect(page.getByText("Clear", { exact: true })).toBeVisible({ timeout: 15_000 });

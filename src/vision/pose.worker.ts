@@ -2,6 +2,7 @@ import { FilesetResolver, PoseLandmarker } from "@mediapipe/tasks-vision";
 import type { PoseLandmarkerResult } from "@mediapipe/tasks-vision";
 import type { PoseDetector } from "@tensorflow-models/pose-detection/dist/pose_detector";
 import type { PoseWorkerRequest, PoseWorkerResponse } from "./protocol";
+import { MEASUREMENT_THRESHOLDS } from "../domain/measurement-registry";
 import { selectPoseDelegate, type PoseDelegate } from "./delegate";
 import { createTfjsPoseDetector, serializeTfjsPose } from "./tfjs-runtime";
 
@@ -53,10 +54,10 @@ async function createLandmarker(): Promise<void> {
       const vision = await FilesetResolver.forVisionTasks("/wasm");
       const options = {
         runningMode: "VIDEO" as const,
-        numPoses: 1,
-        minPoseDetectionConfidence: 0.55,
-        minPosePresenceConfidence: 0.55,
-        minTrackingConfidence: 0.55,
+        numPoses: MEASUREMENT_THRESHOLDS.inference.maximumPoseCount,
+        minPoseDetectionConfidence: MEASUREMENT_THRESHOLDS.confidence.modelPoseDetectionScore,
+        minPosePresenceConfidence: MEASUREMENT_THRESHOLDS.confidence.modelPosePresenceScore,
+        minTrackingConfidence: MEASUREMENT_THRESHOLDS.confidence.modelTrackingScore,
         outputSegmentationMasks: false,
       };
       let created: PoseLandmarker;
@@ -186,7 +187,7 @@ workerScope.onmessage = async (event) => {
     if (cpuDetector) {
       const poses = await cpuDetector.estimatePoses(
         request.frame,
-        { maxPoses: 1, flipHorizontal: false },
+        { maxPoses: MEASUREMENT_THRESHOLDS.inference.maximumPoseCount, flipHorizontal: false },
         request.timestampMs,
       );
       emitCpuResult(poses[0], width, height, request.timestampMs, request.sequence);

@@ -26,9 +26,9 @@ pnpm test:e2e
 
 ## Hosting readiness
 
-The MVP is a static client-only export. Vercel is configured as the primary frontend host through [`vercel.json`](vercel.json); the build runs `pnpm build` and serves Next's `out/` directory. No environment variables, database, API, account, analytics, or provider secret are required.
+The web app is a static client-only export. Vercel is configured as the primary frontend host through [`vercel.json`](vercel.json); the build runs `pnpm build` and serves Next's `out/` directory. No environment variables, database, API, account, analytics, or provider secret are required.
 
-Railway is configured as a Docker-based static host through [`railway.json`](../posture/railway.json) and [`Dockerfile`](../posture/Dockerfile). The container listens on Railway's injected `PORT`, serves the exported app, and exposes `GET /healthz` for readiness. The exact local container check is:
+Railway is configured as a Docker-based static host through [`railway.json`](railway.json) and [`Dockerfile`](Dockerfile). The container listens on Railway's injected `PORT`, serves the exported app, and exposes `GET /healthz` for readiness. The exact local container check is:
 
 ```bash
 docker build -t posture-coach:local .
@@ -41,6 +41,7 @@ In a second terminal, confirm `http://127.0.0.1:3001/healthz` returns `ok`, then
 
 - Relaxed standing, desk posture, and five exercise modes are educational coaching cues, not medical advice.
 - The offline Posture Guide makes every cached topic searchable without camera access and shows observable signals, practical options, camera limits, and direct sources.
+- Every threshold-driven pause, corrective cue, and rep decision resolves to a versioned registry with its metric, view, threshold, rationale, limitation, and history. See [measurement methodology](docs/measurement-methodology.md).
 - Standing mode calibrates a comfortable full-body baseline, then reports only persistent visible head, trunk, or side-to-side alignment tendencies supported by the selected camera view.
 - The app does not diagnose, promise clinical accuracy, or promise injury prevention.
 - Camera frames, uploaded video, uploaded images, landmarks, and session summaries remain in browser memory. There is no account, backend, analytics, paid AI API, or frame upload.
@@ -57,4 +58,4 @@ In a second terminal, confirm `http://127.0.0.1:3001/healthz` returns `ok`, then
 
 The MediaPipe Pose Landmarker runs in a dedicated worker using the pinned Full model and same-origin Wasm assets. Browsers without worker Canvas2D use a lazy, one-frame-in-flight BlazePose/WASM compatibility client on the main thread. The pure domain engine owns normalization, confidence gating, smoothing, calibration, geometry, movement phases, deterministic feedback, and summaries. Browser-session adapters own guided-setup audio/timing and wake-lock lifecycle; React only binds actions and presents snapshots.
 
-See [docs/architecture.md](docs/architecture.md), [docs/licensing.md](docs/licensing.md), [docs/production-readiness.md](docs/production-readiness.md), and [tasks/plan.md](tasks/plan.md).
+See [docs/architecture.md](docs/architecture.md), [docs/licensing.md](docs/licensing.md), [docs/measurement-methodology.md](docs/measurement-methodology.md), [docs/production-readiness.md](docs/production-readiness.md), and [tasks/plan.md](tasks/plan.md).

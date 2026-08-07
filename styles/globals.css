@@ -23,7 +23,6 @@
 html {
   background: var(--paper);
   color: var(--ink);
-  scroll-behavior: smooth;
 }
 
 body {
@@ -1242,6 +1241,235 @@ label.calibration-row {
   line-height: 1.55;
 }
 
+.measurement-register {
+  overflow: clip;
+  margin-top: 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 0.8rem;
+  background: var(--card);
+}
+
+.measurement-register > summary {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 4.5rem;
+  padding: 1rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.measurement-register > summary::-webkit-details-marker {
+  display: none;
+}
+
+.measurement-register > summary:focus-visible {
+  outline: 3px solid rgb(112 82 217 / 0.55);
+  outline-offset: -3px;
+}
+
+.measurement-register > summary > span:first-child {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.measurement-register > summary > span:first-child > span {
+  color: var(--green-dark);
+  font-size: 0.56rem;
+  font-weight: 850;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.measurement-register > summary strong {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.05rem;
+  font-weight: 400;
+  letter-spacing: -0.025em;
+}
+
+.measurement-register-action {
+  flex: 0 0 auto;
+  color: var(--ink-muted);
+  font-size: 0.64rem;
+  font-weight: 750;
+}
+
+.measurement-register[open] .measurement-register-action {
+  color: var(--green-dark);
+}
+
+.measurement-register-body {
+  padding: 1.25rem;
+  border-top: 1px solid var(--line);
+  background: #fcfbff;
+}
+
+.measurement-register-intro {
+  display: grid;
+  grid-template-columns: minmax(14rem, 0.8fr) minmax(0, 1.2fr);
+  gap: 1.5rem;
+  align-items: end;
+  padding-bottom: 1.5rem;
+}
+
+.measurement-register-intro span {
+  color: var(--green-dark);
+  font-size: 0.56rem;
+  font-weight: 850;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.measurement-register-intro h3 {
+  max-width: 36ch;
+  margin: 0.35rem 0 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(1.25rem, 2vw, 1.8rem);
+  font-weight: 400;
+  letter-spacing: -0.035em;
+  line-height: 1.12;
+}
+
+.measurement-register-intro p,
+.measurement-rule-group-heading p {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 0.73rem;
+  line-height: 1.6;
+}
+
+.measurement-rule-group {
+  padding: 1.4rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.measurement-rule-group-heading {
+  display: grid;
+  grid-template-columns: minmax(9rem, 0.35fr) minmax(0, 1.65fr);
+  gap: 1.5rem;
+  margin-bottom: 0.8rem;
+}
+
+.measurement-rule-group-heading h3 {
+  margin: 0;
+  color: var(--green-dark);
+  font-size: 0.64rem;
+  font-weight: 850;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.measurement-rule-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.measurement-rule-card {
+  min-width: 0;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.65rem;
+  background: #fff;
+}
+
+.measurement-rule-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+  color: var(--green-dark);
+  font-size: 0.52rem;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.measurement-rule-meta span + span {
+  color: var(--ink-muted);
+}
+
+.measurement-rule-card h4 {
+  margin: 0.7rem 0 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1rem;
+  font-weight: 400;
+  letter-spacing: -0.025em;
+}
+
+.measurement-rule-value {
+  margin: 0.35rem 0 0.8rem;
+  color: var(--green-dark);
+  font-size: 0.7rem;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.measurement-rule-card dl {
+  display: grid;
+  gap: 0.7rem;
+  margin: 0;
+}
+
+.measurement-rule-card dt {
+  color: var(--ink-muted);
+  font-size: 0.52rem;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.measurement-rule-card dd {
+  margin: 0.18rem 0 0;
+  color: var(--ink-muted);
+  font-size: 0.68rem;
+  line-height: 1.55;
+}
+
+.measurement-rule-card > small {
+  display: block;
+  margin-top: 0.8rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--line);
+  color: #777080;
+  font-size: 0.57rem;
+  line-height: 1.45;
+}
+
+.feedback-measurement-rules {
+  margin-top: 0.7rem;
+  border-top: 1px solid rgb(75 53 142 / 0.14);
+}
+
+.feedback-measurement-rules > summary {
+  padding-top: 0.7rem;
+  color: var(--green-dark);
+  cursor: pointer;
+  font-size: 0.64rem;
+  font-weight: 800;
+}
+
+.feedback-measurement-rules > summary:focus-visible {
+  outline: 2px solid rgb(112 82 217 / 0.55);
+  outline-offset: 3px;
+}
+
+.feedback-measurement-rule-list {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.7rem;
+}
+
+.measurement-rule-card.is-compact {
+  padding: 0.75rem;
+  background: rgb(255 255 255 / 0.75);
+}
+
+.measurement-rule-card.is-compact h4 {
+  font-size: 0.9rem;
+}
+
 .knowledge-tools {
   display: grid;
   grid-template-columns: minmax(17rem, 0.72fr) minmax(0, 1.28fr);
@@ -1684,6 +1912,20 @@ label.calibration-row {
   .knowledge-method-note {
     grid-template-columns: 1fr;
     gap: 0.6rem;
+  }
+
+  .measurement-register > summary,
+  .measurement-register-intro,
+  .measurement-rule-group-heading {
+    grid-template-columns: 1fr;
+  }
+
+  .measurement-register > summary {
+    align-items: flex-start;
+  }
+
+  .measurement-rule-grid {
+    grid-template-columns: 1fr;
   }
 
   .knowledge-grid {

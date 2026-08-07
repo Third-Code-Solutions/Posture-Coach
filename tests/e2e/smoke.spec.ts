@@ -108,6 +108,26 @@ test.describe("privacy-first posture coach smoke", () => {
     ).toBeVisible();
     await expect(page.getByRole("heading", { name: "Educational heuristic" })).toBeVisible();
     await expect(page.getByText(/tracking confidence means landmarks are visible/i)).toBeVisible();
+    const measurementRegister = page.locator(".measurement-register");
+    const measurementRegisterLabel = measurementRegister.getByText(
+      "28 auditable measurement rules",
+      { exact: true },
+    );
+    await expect(measurementRegisterLabel).toBeVisible();
+    await measurementRegisterLabel.click();
+    await expect(measurementRegister).toHaveAttribute("open", "");
+    await expect(
+      measurementRegister.getByRole("heading", {
+        name: /Every measurable gate, correction, and rep decision has a named metric, view, threshold, rationale, and history/i,
+      }),
+    ).toBeVisible();
+    await expect(measurementRegister.locator(".measurement-rule-card")).toHaveCount(28);
+    await expect(
+      measurementRegister.getByText("Squat selected range", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      measurementRegister.getByText(/Calibration − 62°, clamped to 88–125°/),
+    ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Stop if pain starts or worsens." }),
     ).toBeVisible();
@@ -265,12 +285,18 @@ test.describe("privacy-first posture coach smoke", () => {
       "Playwright WebKit on Windows advertises codecs but cannot decode local video blobs.",
     );
     await page.goto("/");
+    await page
+      .getByRole("listbox", { name: "Practice mode" })
+      .getByRole("option", { name: "Plank" })
+      .click();
+    await expect(page.getByLabel("Camera view")).toHaveValue("side");
     await page.locator('input[type="file"]').setInputFiles(poseVideoFixture());
     await expectLocalPoseEngine(page, browserName);
     await page.getByRole("button", { name: "Calibrate" }).click();
-    await expect(page.locator(".error-note")).toContainText(/observed pose looks front/i, {
-      timeout: 15_000,
-    });
+    await expect(page.locator(".error-note")).toContainText(
+      /observed pose looks (?:front|three-quarter), not side/i,
+      { timeout: 15_000 },
+    );
   });
 
   test("runs a local image through single-frame pose inference and overlay", async ({
@@ -298,6 +324,14 @@ test.describe("privacy-first posture coach smoke", () => {
       timeout: 15_000,
     });
     await expect(page.getByText(/image · pose found locally/i)).toBeVisible();
+    await expect(
+      page.locator(".feedback-heuristic-note").getByText(/Operational capture gate/),
+    ).toBeVisible();
+    await page.locator(".feedback-evidence > summary").click();
+    await page.locator(".feedback-card .feedback-measurement-rules > summary").click();
+    await expect(
+      page.locator(".feedback-card").getByText("Still-image pose confidence", { exact: true }),
+    ).toBeVisible();
     await expect(page.locator("img.preview-image")).toBeVisible();
     const overlayPixels = await page.locator("canvas.preview-canvas").evaluate((canvas) => {
       const canvasElement = canvas as HTMLCanvasElement;
@@ -413,7 +447,7 @@ test.describe("privacy-first posture coach smoke", () => {
     expect(layout.imageObjectFit).toBe("contain");
   });
 
-  test("calibrates every exercise mode through the local upload path", async ({
+  test("calibrates front-view upload modes and rejects unsupported side-only views", async ({
     page,
     browserName,
   }) => {
@@ -432,6 +466,8 @@ test.describe("privacy-first posture coach smoke", () => {
       if (mode === "Plank" || mode === "Push-up") {
         await page.getByLabel("Camera view").selectOption("front");
         await expect(page.getByText("Choose a supported view before calibrating.")).toBeVisible();
+        await page.getByLabel("Camera view").selectOption("side");
+        await expect(page.getByText("Choose a supported view before calibrating.")).toBeHidden();
         continue;
       }
       await page.getByLabel("Camera view").selectOption("front");
