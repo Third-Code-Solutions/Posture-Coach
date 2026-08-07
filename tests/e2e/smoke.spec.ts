@@ -548,6 +548,9 @@ test.describe("privacy-first posture coach smoke", () => {
       const preview = document.querySelector<HTMLElement>(".preview-wrap");
       const modeButton = document.querySelector<HTMLElement>(".mode-button");
       const sourceActions = document.querySelector<HTMLElement>(".source-actions");
+      const sourceActionButtons = [
+        ...document.querySelectorAll<HTMLElement>(".source-actions button"),
+      ];
       const selects = [...document.querySelectorAll<HTMLElement>(".select-control")];
       const video = document.querySelector<HTMLVideoElement>(".preview-video");
       const image = document.querySelector<HTMLImageElement>(".preview-image");
@@ -558,6 +561,9 @@ test.describe("privacy-first posture coach smoke", () => {
         previewHeight: preview?.getBoundingClientRect().height ?? 0,
         modeButtonHeight: modeButton?.getBoundingClientRect().height ?? 0,
         selectHeights: selects.map((select) => select.getBoundingClientRect().height),
+        sourceActionHeights: sourceActionButtons.map(
+          (button) => button.getBoundingClientRect().height,
+        ),
         sourceColumns: sourceActions ? getComputedStyle(sourceActions).gridTemplateColumns : "",
         videoObjectFit: video ? getComputedStyle(video).objectFit : "",
         imageObjectFit: image ? getComputedStyle(image).objectFit : "",
@@ -571,6 +577,7 @@ test.describe("privacy-first posture coach smoke", () => {
     expect(layout.previewHeight).toBeGreaterThan(layout.previewWidth);
     expect(layout.modeButtonHeight).toBeGreaterThanOrEqual(44);
     expect(layout.selectHeights.every((height) => height >= 44)).toBe(true);
+    expect(layout.sourceActionHeights.every((height) => height >= 44)).toBe(true);
     expect(layout.sourceColumns.trim().split(/\s+/)).toHaveLength(1);
     expect(layout.videoObjectFit).toBe("contain");
     expect(layout.imageObjectFit).toBe("contain");

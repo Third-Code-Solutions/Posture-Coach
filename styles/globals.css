@@ -850,7 +850,7 @@ label:has(input:focus-visible) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 2.65rem;
+  min-height: 2.75rem;
   padding: 0.65rem 0.8rem;
   border-radius: 0.62rem;
   font-size: 0.76rem;
