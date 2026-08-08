@@ -752,9 +752,13 @@ test.describe("mobile portrait camera", () => {
       ),
     ).toBeGreaterThan(2);
     await expect(page.getByText("Guided setup", { exact: true })).toBeHidden({ timeout: 8_000 });
+    await expect(page.getByRole("status", { name: "Calibration coach" })).toBeVisible({
+      timeout: 5_000,
+    });
+    await expect(page.getByRole("progressbar", { name: "Calibration progress" })).toBeVisible();
     await expect(
-      page.getByText(/Calibrating \d+\/12|Checking steadiness|Calibration ready/),
-    ).toBeVisible({ timeout: 5_000 });
+      page.getByRole("button", { name: /Cancel calibration|Recalibrate/ }),
+    ).toBeVisible();
     await page.locator(".device-readiness summary").click();
     await expect(
       page.getByText(/Rear camera.*source, .*effective.*rotated locally/i),

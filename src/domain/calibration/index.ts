@@ -1,4 +1,10 @@
-import type { AnalysisMode, CameraView, CalibrationProfile, FrameObservation } from "../contracts";
+import type {
+  AnalysisMode,
+  CameraView,
+  CalibrationProfile,
+  FrameObservation,
+  LandmarkName,
+} from "../contracts";
 import { isObservedViewCompatible, MIN_OBSERVED_VIEW_CONFIDENCE } from "../contracts";
 import { assessConfidence } from "../confidence";
 import {
@@ -14,6 +20,28 @@ import {
 import { MEASUREMENT_THRESHOLDS } from "../measurement-registry";
 
 export const CALIBRATION_SAMPLE_TARGET = MEASUREMENT_THRESHOLDS.calibration.sampleTarget;
+
+export type CalibrationBlockerCode =
+  | "context_changed"
+  | "view_unclear"
+  | "view_mismatch"
+  | "tracking_unstable"
+  | "full_body_out_of_frame"
+  | "invalid_pose_geometry"
+  | "start_position_unclear"
+  | "hold_still";
+
+export interface CalibrationBlocker {
+  code: CalibrationBlockerCode;
+  observedView?: CameraView;
+  missingLandmarks?: readonly LandmarkName[];
+}
+
+export interface CalibrationUpdate {
+  profile: CalibrationProfile;
+  accepted: boolean;
+  blocker: CalibrationBlocker | null;
+}
 
 export function createCalibrationProfile(
   mode: AnalysisMode,
@@ -60,25 +88,48 @@ export class CalibrationWindow {
   }
 
   add(observation: FrameObservation): CalibrationProfile {
-    if (!this.acceptsTimestamp(observation.timestampMs)) return this.profile(null);
+    return this.addWithStatus(observation).profile;
+  }
+
+  addWithStatus(observation: FrameObservation): CalibrationUpdate {
+    if (!this.acceptsTimestamp(observation.timestampMs)) {
+      return this.update(false, null);
+    }
     const confidence = assessConfidence(observation, this.mode);
     const timestampGap =
       this.lastTimestampMs === null ? null : observation.timestampMs - this.lastTimestampMs;
     if (
       observation.cameraView !== this.view ||
-      observation.mirroredPreview !== this.mirroredPreview ||
-      observation.viewConfidence < MIN_OBSERVED_VIEW_CONFIDENCE ||
-      !isObservedViewCompatible(this.mode, this.view, observation.observedView) ||
-      (timestampGap !== null &&
-        (timestampGap <= 0 ||
-          timestampGap > MEASUREMENT_THRESHOLDS.calibration.maximumSampleGapMs)) ||
-      confidence.state === "insufficient" ||
-      confidence.state === "unsupported" ||
-      (this.mode !== "desk" && wholeBodyFrameDeviation(observation.landmarks, this.mode) > 0)
+      observation.mirroredPreview !== this.mirroredPreview
     ) {
-      this.samples = [];
-      this.lastTimestampMs = observation.timestampMs;
-      return this.profile(null);
+      return this.reject(observation.timestampMs, { code: "context_changed" });
+    }
+    if (
+      observation.viewConfidence < MIN_OBSERVED_VIEW_CONFIDENCE ||
+      observation.observedView === "unknown"
+    ) {
+      return this.reject(observation.timestampMs, { code: "view_unclear" });
+    }
+    if (!isObservedViewCompatible(this.mode, this.view, observation.observedView)) {
+      return this.reject(observation.timestampMs, {
+        code: "view_mismatch",
+        observedView: observation.observedView,
+      });
+    }
+    if (
+      timestampGap !== null &&
+      (timestampGap <= 0 || timestampGap > MEASUREMENT_THRESHOLDS.calibration.maximumSampleGapMs)
+    ) {
+      return this.reject(observation.timestampMs, { code: "tracking_unstable" });
+    }
+    if (confidence.state === "insufficient" || confidence.state === "unsupported") {
+      return this.reject(observation.timestampMs, {
+        code: "tracking_unstable",
+        missingLandmarks: confidence.missing,
+      });
+    }
+    if (this.mode !== "desk" && wholeBodyFrameDeviation(observation.landmarks, this.mode) > 0) {
+      return this.reject(observation.timestampMs, { code: "full_body_out_of_frame" });
     }
     this.lastTimestampMs = observation.timestampMs;
     this.observedView = observation.observedView;
@@ -89,35 +140,29 @@ export class CalibrationWindow {
       !isFinitePoint(hip) ||
       distance(shoulder, hip) < MEASUREMENT_THRESHOLDS.geometry.minimumDistance
     ) {
-      this.samples = [];
-      return this.profile(null);
+      return this.reject(observation.timestampMs, { code: "invalid_pose_geometry" });
     }
     const torso = Math.hypot(shoulder.x - hip.x, shoulder.y - hip.y);
     if (!Number.isFinite(torso) || torso < MEASUREMENT_THRESHOLDS.geometry.minimumDistance) {
-      this.samples = [];
-      return this.profile(null);
+      return this.reject(observation.timestampMs, { code: "invalid_pose_geometry" });
     }
     const movementMetric = calibrationMovementMetric(this.mode, observation);
     const isStationaryMode = this.mode === "desk" || this.mode === "standing";
     if (!isStationaryMode && movementMetric === null) {
-      this.samples = [];
-      return this.profile(null);
+      return this.reject(observation.timestampMs, { code: "start_position_unclear" });
     }
     const extraMetrics = calibrationExtraMetrics(this.mode, observation);
     if (!isStationaryMode && extraMetrics === null) {
-      this.samples = [];
-      return this.profile(null);
+      return this.reject(observation.timestampMs, { code: "start_position_unclear" });
     }
     const standingMetrics =
       this.mode === "standing" ? standingCalibrationMetrics(observation) : null;
     if (this.mode === "standing" && standingMetrics === null) {
-      this.samples = [];
-      return this.profile(null);
+      return this.reject(observation.timestampMs, { code: "invalid_pose_geometry" });
     }
     const deskMetrics = this.mode === "desk" ? deskCalibrationMetrics(observation) : null;
     if (this.mode === "desk" && deskMetrics === null) {
-      this.samples = [];
-      return this.profile(null);
+      return this.reject(observation.timestampMs, { code: "invalid_pose_geometry" });
     }
     this.samples.push({
       torso,
@@ -133,7 +178,14 @@ export class CalibrationWindow {
     if (this.samples.length > this.targetSamples) this.samples.shift();
     const stable = this.samples.length >= this.targetSamples && this.isStable();
     const baseline = stable ? this.average() : {};
-    return this.profile(stable ? { completedAtMs: observation.timestampMs, baseline } : null);
+    const profile = this.profile(
+      stable ? { completedAtMs: observation.timestampMs, baseline } : null,
+    );
+    return {
+      profile,
+      accepted: true,
+      blocker: !stable && this.samples.length >= this.targetSamples ? { code: "hold_still" } : null,
+    };
   }
 
   reset(): void {
@@ -159,6 +211,16 @@ export class CalibrationWindow {
       completedAtMs: completed?.completedAtMs ?? null,
       baseline: completed?.baseline ?? {},
     };
+  }
+
+  private update(accepted: boolean, blocker: CalibrationBlocker | null): CalibrationUpdate {
+    return { profile: this.profile(null), accepted, blocker };
+  }
+
+  private reject(timestampMs: number, blocker: CalibrationBlocker): CalibrationUpdate {
+    this.samples = [];
+    this.lastTimestampMs = timestampMs;
+    return this.update(false, blocker);
   }
 
   private isStable(): boolean {

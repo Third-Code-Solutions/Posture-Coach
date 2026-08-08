@@ -319,7 +319,7 @@ test.describe("privacy-first posture coach smoke", () => {
         }),
       )
       .toBe(true);
-    await page.getByRole("button", { name: "Calibrate" }).click();
+    await page.getByRole("button", { name: "Start calibration" }).click();
     await expect(page.getByText("Calibration ready")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText("Clear", { exact: true })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText("Session summary")).toBeVisible({ timeout: 30_000 });
@@ -358,11 +358,12 @@ test.describe("privacy-first posture coach smoke", () => {
     await expect(page.getByLabel("Camera view")).toHaveValue("side");
     await page.locator('input[type="file"]').setInputFiles(poseVideoFixture());
     await expectLocalPoseEngine(page, browserName);
-    await page.getByRole("button", { name: "Calibrate" }).click();
-    await expect(page.locator(".error-note")).toContainText(
-      /observed pose looks (?:front|three-quarter), not side/i,
+    await page.getByRole("button", { name: "Start calibration" }).click();
+    await expect(page.getByRole("status", { name: "Calibration coach" })).toContainText(
+      /match the selected view.*looks (?:front-facing|three-quarter)/i,
       { timeout: 15_000 },
     );
+    await expect(page.getByRole("button", { name: "Cancel calibration" })).toBeVisible();
   });
 
   test("runs a local image through single-frame pose inference and overlay", async ({
@@ -609,7 +610,7 @@ test.describe("privacy-first posture coach smoke", () => {
       await page.getByLabel("Camera view").selectOption("front");
       await page.locator('input[type="file"]').setInputFiles(poseVideoFixture());
       await expectLocalPoseEngine(page, browserName);
-      await page.getByRole("button", { name: "Calibrate" }).click();
+      await page.getByRole("button", { name: "Start calibration" }).click();
       await expect(page.getByText("Calibration ready")).toBeVisible({ timeout: 15_000 });
     }
   });

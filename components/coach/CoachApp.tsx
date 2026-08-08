@@ -5,12 +5,14 @@ import { FeedbackCard } from "../feedback/FeedbackCard";
 import { PostureLibrary } from "../knowledge/PostureLibrary";
 import { ModeSelector } from "../controls/ModeSelector";
 import { DeviceReadiness } from "./DeviceReadiness";
+import { CalibrationCoach } from "./CalibrationCoach";
 import { useSessionAssistance } from "./useSessionAssistance";
 import { PoseCanvas } from "../overlay/PoseCanvas";
 import {
   AnalysisMode,
   CameraView,
   CALIBRATION_SAMPLE_TARGET,
+  CalibrationBlocker,
   CalibrationProfile,
   CalibrationWindow,
   EvaluationResult,
@@ -24,9 +26,7 @@ import {
   LandmarkSmoother,
   MEASUREMENT_THRESHOLDS,
   createCalibrationProfile,
-  isObservedViewCompatible,
   isViewSupported,
-  MIN_OBSERVED_VIEW_CONFIDENCE,
 } from "../../src/domain";
 import {
   AdaptiveInferenceQualityController,
@@ -253,6 +253,7 @@ export function CoachApp() {
     createCalibrationProfile("standing", "side", true),
   );
   const [calibrating, setCalibrating] = useState(false);
+  const [calibrationBlocker, setCalibrationBlocker] = useState<CalibrationBlocker | null>(null);
   const [sessionSeconds, setSessionSeconds] = useState(0);
   const [sessionSummary, setSessionSummary] = useState<SessionSummary | null>(null);
   const [sourceSize, setSourceSize] = useState({ width: 0, height: 0 });
@@ -446,46 +447,15 @@ export function CoachApp() {
     }
     if (calibratingRef.current && calibrationRef.current) {
       if (!calibrationRef.current.acceptsTimestamp(observation.timestampMs)) return;
-      if (
-        observation.poseConfidence >=
-          MEASUREMENT_THRESHOLDS.confidence.minimumCalibrationViewPoseScore &&
-        (observation.observedView === "unknown" ||
-          observation.viewConfidence < MIN_OBSERVED_VIEW_CONFIDENCE)
-      ) {
-        calibratingRef.current = false;
-        calibrationStableRef.current = false;
-        calibrationRef.current.reset();
-        setCalibrating(false);
-        setCalibration(
-          createCalibrationProfile(modeRef.current, viewRef.current, mirroredRef.current),
-        );
-        setError(
-          "I could not confirm the camera view. Move the camera to a clearer front, side, or three-quarter angle before calibrating.",
-        );
-        return;
-      }
-      if (
-        observation.viewConfidence >= MIN_OBSERVED_VIEW_CONFIDENCE &&
-        !isObservedViewCompatible(modeRef.current, viewRef.current, observation.observedView)
-      ) {
-        calibratingRef.current = false;
-        calibrationStableRef.current = false;
-        calibrationRef.current.reset();
-        setCalibrating(false);
-        setCalibration(
-          createCalibrationProfile(modeRef.current, viewRef.current, mirroredRef.current),
-        );
-        setError(
-          `The observed pose looks ${observation.observedView}, not ${viewRef.current}. Choose the matching camera view before calibrating.`,
-        );
-        return;
-      }
-      const profile = calibrationRef.current.add(observation);
+      const update = calibrationRef.current.addWithStatus(observation);
+      const profile = update.profile;
       setCalibration(profile);
+      if (update.blocker || update.accepted) setCalibrationBlocker(update.blocker);
       if (profile.stable) {
         calibratingRef.current = false;
         calibrationStableRef.current = true;
         setCalibrating(false);
+        setCalibrationBlocker(null);
         engineRef.current.setCalibrationProfile(profile);
         engineRef.current.setCalibrationStable(true);
       }
@@ -1031,6 +1001,7 @@ export function CoachApp() {
     setMirrored(requestedMirror);
     mirroredRef.current = requestedMirror;
     setCalibration(createCalibrationProfile(modeRef.current, viewRef.current, requestedMirror));
+    setCalibrationBlocker(null);
     if (!navigator.mediaDevices?.getUserMedia) {
       deviceDiagnosticsRef.current.recordCameraPermission("unavailable");
       setSourceState("error");
@@ -1167,6 +1138,7 @@ export function CoachApp() {
         mirroredRef.current = actualMirror;
         setMirrored(actualMirror);
         setCalibration(createCalibrationProfile(modeRef.current, viewRef.current, actualMirror));
+        setCalibrationBlocker(null);
       }
       video.srcObject = stream;
       video.autoplay = true;
@@ -1224,6 +1196,7 @@ export function CoachApp() {
     setMirrored(false);
     mirroredRef.current = false;
     setCalibration(createCalibrationProfile(modeRef.current, viewRef.current, false));
+    setCalibrationBlocker(null);
     setSourceState("loading");
     const video = videoRef.current;
     const image = imageRef.current;
@@ -1291,6 +1264,7 @@ export function CoachApp() {
     processingRef.current = false;
     calibratingRef.current = false;
     setCalibrating(false);
+    setCalibrationBlocker(null);
     stopFrameLoop();
     if (!preserveInference) {
       workerRef.current?.dispose();
@@ -1406,10 +1380,24 @@ export function CoachApp() {
     engineRef.current.setCalibrationStable(false);
     setCalibration(createCalibrationProfile(currentMode, currentView, currentMirror));
     setCalibrating(true);
+    setCalibrationBlocker(null);
     setResult(null);
   }
 
   const beginCalibration = () => beginCalibrationForCurrentContext();
+
+  function cancelCalibration(): void {
+    cancelGuidedSetup();
+    calibratingRef.current = false;
+    calibrationStableRef.current = false;
+    calibrationRef.current?.reset();
+    calibrationRef.current = null;
+    engineRef.current.setCalibrationStable(false);
+    setCalibration(createCalibrationProfile(modeRef.current, viewRef.current, mirroredRef.current));
+    setCalibrationBlocker(null);
+    setCalibrating(false);
+    setResult(null);
+  }
 
   function startGuidedSetupForCamera(): void {
     if (
@@ -1426,6 +1414,7 @@ export function CoachApp() {
     calibrationRef.current?.reset();
     engineRef.current.setCalibrationStable(false);
     setCalibration(createCalibrationProfile(modeRef.current, viewRef.current, mirroredRef.current));
+    setCalibrationBlocker(null);
     setCalibrating(false);
     setResult(null);
   }
@@ -1450,6 +1439,7 @@ export function CoachApp() {
     calibrationStableRef.current = false;
     calibrationRef.current?.reset();
     setCalibration(createCalibrationProfile(nextMode, viewRef.current, mirroredRef.current));
+    setCalibrationBlocker(null);
     setCalibrating(false);
     setResult(null);
     startGuidedSetupForCamera();
@@ -1482,6 +1472,7 @@ export function CoachApp() {
     calibrationStableRef.current = false;
     calibrationRef.current?.reset();
     setCalibration(createCalibrationProfile(modeRef.current, nextView, mirroredRef.current));
+    setCalibrationBlocker(null);
     setCalibrating(false);
     setResult(null);
     startGuidedSetupForCamera();
@@ -1497,6 +1488,7 @@ export function CoachApp() {
     calibrationStableRef.current = false;
     calibrationRef.current?.reset();
     setCalibration(createCalibrationProfile(modeRef.current, viewRef.current, next));
+    setCalibrationBlocker(null);
     setCalibrating(false);
     setResult(null);
     startGuidedSetupForCamera();
@@ -1531,6 +1523,7 @@ export function CoachApp() {
     setTrackingLatencyMs(null);
     setResult(null);
     setCalibration(createCalibrationProfile(modeRef.current, viewRef.current, mirroredRef.current));
+    setCalibrationBlocker(null);
     if (resetSource) {
       setSourceKind(null);
       setSourceState("idle");
@@ -1846,64 +1839,31 @@ export function CoachApp() {
                     : " Off; start calibration manually"}
                 </span>
               </label>
-              <div className="calibration-row" aria-live="polite">
-                <span className="calibration-icon" aria-hidden="true">
-                  {guidedSetupSeconds !== null
-                    ? guidedSetupSeconds
-                    : calibrating
-                      ? "…"
-                      : calibration.stable
-                        ? "✓"
-                        : "○"}
-                </span>
-                <span>
-                  <strong>
-                    {guidedSetupSeconds !== null
-                      ? `Calibration starts in ${guidedSetupSeconds}`
-                      : calibrating
-                        ? calibration.sampleCount >= CALIBRATION_SAMPLE_TARGET
-                          ? "Checking steadiness"
-                          : `Calibrating ${calibration.sampleCount}/${CALIBRATION_SAMPLE_TARGET}`
-                        : calibration.stable
-                          ? "Calibration ready"
-                          : "Calibration needed"}
-                  </strong>
-                  {guidedSetupSeconds !== null
-                    ? " Leave the controls and settle inside the full-body guide"
-                    : calibrating
-                      ? calibration.sampleCount >= CALIBRATION_SAMPLE_TARGET
-                        ? " Hold a relaxed position; baseline waits for a stable window"
-                        : mode === "standing"
-                          ? " Stand naturally; do not force alignment"
-                          : " Hold a relaxed position"
-                      : " View-specific baseline"}
-                </span>
-              </div>
+              {(sourceState === "active" || sourceState === "loading") &&
+                sourceKind !== "image" && (
+                  <CalibrationCoach
+                    blocker={calibrationBlocker}
+                    calibrating={calibrating}
+                    calibration={calibration}
+                    guidedSetupSeconds={guidedSetupSeconds}
+                    mode={mode}
+                    startDisabled={sourceState === "loading"}
+                    view={view}
+                    viewSupported={viewSupported}
+                    onCancel={cancelCalibration}
+                    onStart={beginCalibration}
+                  />
+                )}
               {!viewSupported && (
                 <p className="positioning-note" role="status">
                   Choose a supported view before calibrating.
                 </p>
               )}
               <div className="source-actions">
-                {(sourceState === "active" || sourceState === "loading") &&
-                sourceKind !== "image" ? (
-                  <button
-                    className="button-primary"
-                    type="button"
-                    onClick={beginCalibration}
-                    disabled={sourceState === "loading"}
-                  >
-                    {sourceState === "loading"
-                      ? "Preparing video…"
-                      : guidedSetupSeconds !== null
-                        ? `Calibrate now · ${guidedSetupSeconds}s`
-                        : calibrating
-                          ? "Calibrating…"
-                          : calibration.stable
-                            ? "Recalibrate"
-                            : "Calibrate"}
-                  </button>
-                ) : (
+                {!(
+                  (sourceState === "active" || sourceState === "loading") &&
+                  sourceKind !== "image"
+                ) && (
                   <button
                     className="button-primary"
                     type="button"
